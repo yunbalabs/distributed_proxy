@@ -12,7 +12,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0]).
+-export([start_link/0, get_replica_pid/1]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -44,6 +44,14 @@
     {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+
+get_replica_pid(Idx) ->
+    case ets:lookup(?ETS, Idx) of
+        [{Idx, Pid}] ->
+            {ok, Pid};
+        [] ->
+            not_found
+    end.
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -137,7 +145,7 @@ handle_info(tick, State) ->
         end, ShouldStart),
 
     maybe_stop_replica(ShouldStop),
-    maybe_start_replica(ShouldStart2),
+    maybe_start_replica(ShouldStart2, Ring),
     {noreply, State};
 handle_info({'DOWN', MonRef, process, _P, _I}, State) ->
     case ets:lookup(?ETS, MonRef) of
@@ -188,22 +196,36 @@ schedule_management_timer() ->
     ManagementTick = distributed_proxy_config:check_replica_interval(),
     erlang:send_after(ManagementTick, ?MODULE, tick).
 
-maybe_start_replica(StartIdx) ->
+maybe_start_replica(StartIdx, Ring) ->
     StartFun =
-        fun(Index) ->
-            lager:debug("Will start replica for partition ~p", [Index]),
+        fun({Idx, GroupId}) ->
+            Nodes = distributed_proxy_ring:get_nodes(GroupId, Ring),
+            GroupIndex = distributed_proxy_util:index_of(node(), Nodes),
+            lager:debug("Will start replica for partition ~p_~p", [Idx, GroupIndex]),
             {ok, Pid} =
-                distributed_proxy_replica_sup:start_replica(Index),
-            lager:debug("Replica initialization ready ~p, ~p", [Pid, Index]),
-            {Index, Pid}
+                distributed_proxy_replica_sup:start_replica({Idx, GroupIndex}),
+            lager:debug("Started replica, waiting for initialization to complete ~p, ~p_~p", [Pid, Idx, GroupIndex]),
+            case distributed_proxy_replica:wait_for_init(Pid) of
+                ok ->
+                    lager:debug("Replica initialization ready ~p, ~p_~p", [Pid, Idx, GroupIndex]),
+                    {Idx, Pid};
+                Error ->
+                    lager:error("Replica initialization failed ~p ~p_~p ~p", [Pid, Idx, GroupIndex, Error]),
+                    {error, Error}
+            end
         end,
     MaxStart = distributed_proxy_config:replica_parallel_start_count(),
-    IndexPid = distributed_proxy_util:pmap(StartFun, StartIdx, MaxStart),
+    StartResult = distributed_proxy_util:pmap(StartFun, StartIdx, MaxStart),
 
     [begin
-         MonRef = erlang:monitor(process, Pid),
-         ets:insert(?ETS, [{Idx, Pid}, {MonRef, Idx}])
-     end || {{Idx, _GroupId}, Pid} <- IndexPid].
+         case Result of
+             {error, _} ->
+                 try_again_later;
+             {Idx, Pid} ->
+                 MonRef = erlang:monitor(process, Pid),
+                 ets:insert(?ETS, [{Idx, Pid}, {MonRef, Idx}])
+         end
+     end || Result <- StartResult].
 
 maybe_stop_replica(StopIdx) ->
     [begin

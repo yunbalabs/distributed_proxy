@@ -63,8 +63,8 @@ init([]) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-proxy_ref(Index) ->
-    {Index, {distributed_proxy_replica_proxy, start_link, [Index]},
+proxy_ref({IndexName, Idx, GroupIndex}) ->
+    {IndexName, {distributed_proxy_replica_proxy, start_link, [IndexName, Idx, GroupIndex]},
         permanent, 5000, worker, [distributed_proxy_replica_proxy]}.
 
 get_indexes() ->
@@ -73,6 +73,6 @@ get_indexes() ->
     ReplicaSize = distributed_proxy_config:replica_size(),
     ReplicaSeq = lists:seq(1, ReplicaSize),
     lists:flatten([
-        [list_to_binary(lists:flatten(io_lib:format("~w_~w", [Idx, Gid]))) || Gid <- ReplicaSeq]
+        [{list_to_binary(lists:flatten(io_lib:format("~w_~w", [Idx, GroupIndex]))), Idx, GroupIndex} || GroupIndex <- ReplicaSeq]
         || {Idx, _} <- AllOwners
     ]).

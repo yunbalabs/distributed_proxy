@@ -12,12 +12,14 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/1]).
+-export([start_link/1, wait_for_init/1, get_state/1, refuse_request/1, accept_request/1]).
 
 %% gen_fsm callbacks
 -export([init/1,
-    state_name/2,
-    state_name/3,
+    warn_up/2,
+    started/3,
+    active/2,
+    refuse/2,
     handle_event/3,
     handle_sync_event/4,
     handle_info/3,
@@ -26,7 +28,9 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {}).
+-record(state, {module, module_state, index, group_index, warn_up_check_interval, warn_up_timeout}).
+
+-include("distributed_proxy_replica.hrl").
 
 %%%===================================================================
 %%% API
@@ -43,6 +47,18 @@
 -spec(start_link(Args :: term()) -> {ok, pid()} | ignore | {error, Reason :: term()}).
 start_link(Args) ->
     gen_fsm:start_link(?MODULE, [Args], []).
+
+wait_for_init(Pid) ->
+    gen_fsm:sync_send_event(Pid, wait_for_init, infinity).
+
+get_state(Pid) ->
+    gen_fsm:sync_send_all_state_event(Pid, get_state).
+
+refuse_request(Pid) ->
+    gen_fsm:send_all_state_event(Pid, refuse_request).
+
+accept_request(Pid) ->
+    gen_fsm:send_all_state_event(Pid, accept_request).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -61,8 +77,15 @@ start_link(Args) ->
     {ok, StateName :: atom(), StateData :: #state{}} |
     {ok, StateName :: atom(), StateData :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term()} | ignore).
-init([_Args]) ->
-    {ok, state_name, #state{}}.
+init([{Idx, GroupIndex}]) ->
+    process_flag(trap_exit, true),
+    Module = distributed_proxy_config:replica_module(),
+    WarnUpCheckInterval = distributed_proxy_config:warn_up_check_interval(),
+    WarnUpTimeout = distributed_proxy_config:warn_up_timeout(),
+    {ok, started, #state{
+        index = Idx, group_index = GroupIndex,
+        module = Module,
+        warn_up_check_interval = WarnUpCheckInterval, warn_up_timeout = WarnUpTimeout}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -75,13 +98,56 @@ init([_Args]) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec(state_name(Event :: term(), State :: #state{}) ->
+-spec(warn_up(Event :: term(), State :: #state{}) ->
     {next_state, NextStateName :: atom(), NextState :: #state{}} |
     {next_state, NextStateName :: atom(), NextState :: #state{},
         timeout() | hibernate} |
     {stop, Reason :: term(), NewState :: #state{}}).
-state_name(_Event, State) ->
-    {next_state, state_name, State}.
+warn_up(check_tick, State = #state{warn_up_timeout = 0}) ->
+    {stop, timeout, State};
+warn_up(check_tick, State = #state{
+    module = Module, module_state = ModuleState,
+    warn_up_check_interval = CheckInterval, warn_up_timeout = Timeout,
+    index = Index, group_index = GroupIndex
+}) ->
+    case Module:check_warnup_state(ModuleState) of
+        {ok, up, ModuleState2} ->
+            replica_actived(State),
+            lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, warn_up, active]),
+            {next_state, active, State#state{module_state = ModuleState2}};
+        {ok, _, ModuleState2} ->
+            gen_fsm:send_event_after(CheckInterval, check_tick),
+            {next_state, warn_up, State#state{module_state = ModuleState2, warn_up_timeout = Timeout - 1}};
+        {error, Reason} ->
+            {stop, Reason, State}
+    end;
+warn_up(#replica_request{sender = Sender}, State) ->
+    distributed_proxy_message:reply(Sender, {temporarily_unavailable, warn_up}),
+    {next_state, warn_up, State};
+warn_up(Req, State) ->
+    lager:error("unknown request ~p", [Req]),
+    {next_state, warn_up, State}.
+
+active(#replica_request{request = Request, sender = Sender}, State = #state{module = Module, module_state = ModuleState}) ->
+    case Module:handle_request(Request, Sender, ModuleState) of
+        {reply, Reply, ModuleState2} ->
+            distributed_proxy_message:reply(Sender, Reply),
+            {next_state, active, State#state{module_state = ModuleState2}};
+        {noreply, ModuleState2} ->
+            {next_state, active, State#state{module_state = ModuleState2}};
+        {stop, Reason, ModuleState2} ->
+            {stop, Reason, State#state{module_state = ModuleState2}}
+    end;
+active(Req, State) ->
+    lager:error("unknown request ~p", [Req]),
+    {next_state, active, State}.
+
+refuse(#replica_request{sender = Sender}, State) ->
+    distributed_proxy_message:reply(Sender, {error, refuse}),
+    {next_state, refuse, State};
+refuse(Req, State) ->
+    lager:error("unknown request ~p", [Req]),
+    {next_state, refuse, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -94,7 +160,7 @@ state_name(_Event, State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec(state_name(Event :: term(), From :: {pid(), term()},
+-spec(started(Event :: term(), From :: {pid(), term()},
         State :: #state{}) ->
     {next_state, NextStateName :: atom(), NextState :: #state{}} |
     {next_state, NextStateName :: atom(), NextState :: #state{},
@@ -105,9 +171,20 @@ state_name(_Event, State) ->
     {stop, Reason :: normal | term(), NewState :: #state{}} |
     {stop, Reason :: normal | term(), Reply :: term(),
         NewState :: #state{}}).
-state_name(_Event, _From, State) ->
-    Reply = ok,
-    {reply, Reply, state_name, State}.
+started(wait_for_init, _From, State = #state{
+    module = Module,
+    warn_up_check_interval = CheckInterval,
+    index = Index, group_index = GroupIndex
+}) ->
+    case Module:init(Index, GroupIndex) of
+        {ok, ModuleState} ->
+            lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, started, warn_up]),
+            gen_fsm:send_event_after(CheckInterval, check_tick),
+
+            {reply, ok, warn_up, State#state{module_state = ModuleState}};
+        {error, Reason} ->
+            {stop, Reason, State}
+    end.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -124,6 +201,12 @@ state_name(_Event, _From, State) ->
     {next_state, NextStateName :: atom(), NewStateData :: #state{},
         timeout() | hibernate} |
     {stop, Reason :: term(), NewStateData :: #state{}}).
+handle_event(refuse_request, StateName, State = #state{index = Index, group_index = GroupIndex}) ->
+    lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, StateName, refuse]),
+    {next_state, refuse, State};
+handle_event(accept_request, StateName, State = #state{index = Index, group_index = GroupIndex}) ->
+    lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, StateName, active]),
+    {next_state, active, State};
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
@@ -146,9 +229,8 @@ handle_event(_Event, StateName, State) ->
         timeout() | hibernate} |
     {stop, Reason :: term(), Reply :: term(), NewStateData :: term()} |
     {stop, Reason :: term(), NewStateData :: term()}).
-handle_sync_event(_Event, _From, StateName, State) ->
-    Reply = ok,
-    {reply, Reply, StateName, State}.
+handle_sync_event(get_state, _From, StateName, State) ->
+    {reply, State#state.module_state, StateName, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -199,3 +281,6 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+replica_actived(_State) ->
+    %% TODO: update the ring
+    ok.

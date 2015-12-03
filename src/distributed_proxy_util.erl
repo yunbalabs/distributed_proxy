@@ -10,7 +10,7 @@
 -author("zy").
 
 %% API
--export([start_app_deps/1, replace_file/2, index_of/2, pmap/3]).
+-export([start_app_deps/1, replace_file/2, index_of/2, pmap/3, replica_proxy_reg_name/1]).
 
 %% @spec start_app_deps(App :: atom()) -> ok
 %% @doc Start depedent applications of App.
@@ -149,3 +149,7 @@ index_of(Item, List) -> index_of(Item, List, 1).
 index_of(_, [], _)  -> not_found;
 index_of(Item, [Item|_], Index) -> Index;
 index_of(Item, [_|Tl], Index) -> index_of(Item, Tl, Index+1).
+
+replica_proxy_reg_name(Index) ->
+    AllBin = <<$d,$i,$s,$t,$r,$i,$b,$u,$t,$e,$d,$_,$p,$r,$o,$x,$y,$_,$r,$e,$p,$l,$i,$c,$a,$_,$p,$r,$o,$x,$y,$_, Index/binary>>,
+    binary_to_atom(AllBin, latin1).

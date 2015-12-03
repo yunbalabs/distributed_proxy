@@ -90,6 +90,7 @@ reconcile(State = #state{
     raw_ring = Ring, node_group = NodeGroup, free_node = FreeNode, replica_size = ReplicaSize
 }) when length(FreeNode) =:= ReplicaSize ->
     GroupId = length(NodeGroup),
+    %% TODO: change the ring after these replica active
     Ring2 = ring:add_node(Ring, GroupId),
     NodeGroup2 = [{GroupId, FreeNode} | NodeGroup],
     State#state{
