@@ -10,7 +10,11 @@
 -author("zy").
 
 %% API
--export([start_app_deps/1, replace_file/2, index_of/2, pmap/3, replica_proxy_reg_name/1]).
+-export([start_app_deps/1, replace_file/2, moment/0, index_of/2, pmap/3, replica_proxy_reg_name/1]).
+
+%% 719528 days from Jan 1, 0 to Jan 1, 1970
+%%  *86400 seconds/day
+-define(SEC_TO_EPOCH, 62167219200).
 
 %% @spec start_app_deps(App :: atom()) -> ok
 %% @doc Start depedent applications of App.
@@ -143,6 +147,15 @@ pmap_collect_rest(Pending, Done) ->
             {Result, NewPending} = pmap_collect_one(Pending),
             pmap_collect_rest(NewPending, [Result | Done])
     end.
+
+%% @spec moment() -> integer()
+%% @doc Get the current "moment".  Current implementation is the
+%%      number of seconds from year 0 to now, universal time, in
+%%      the gregorian calendar.
+
+moment() ->
+    {Mega, Sec, _Micro} = os:timestamp(),
+    (Mega * 1000000) + Sec + ?SEC_TO_EPOCH.
 
 index_of(Item, List) -> index_of(Item, List, 1).
 

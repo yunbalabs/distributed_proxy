@@ -85,6 +85,8 @@ init([]) ->
         {error, Reason} ->
             {stop, Reason};
         Ring ->
+            AllNodes = distributed_proxy_ring:get_all_nodes(Ring),
+            join_cluster(lists:delete(node(), AllNodes)),
             cache_ring(Ring),
             {ok, #state{ring = Ring}}
     end.
@@ -105,19 +107,24 @@ init([]) ->
     {stop, Reason :: term(), Reply :: term(), NewState :: #state{}} |
     {stop, Reason :: term(), NewState :: #state{}}).
 handle_call({add_node, Node}, _From, State = #state{ring = Ring}) ->
-    Ring2 = distributed_proxy_ring:add_node(Node, Ring),
-    do_write_ringfile(Ring2),
-    cache_ring(Ring2),
+    case lists:member(Node, distributed_proxy_ring:get_all_nodes(Ring)) of
+        true ->
+            {reply, ok, State};
+        false ->
+            Ring2 = distributed_proxy_ring:add_node(Node, Ring),
+            do_write_ringfile(Ring2),
+            cache_ring(Ring2),
 
-    %% TODO: should use gossip to make the ring consistency on all nodes
-    AllNodes = distributed_proxy_ring:get_all_nodes(Ring2),
-    lists:foreach(
-        fun(EachNode) ->
-            ok = set_ring(EachNode, Ring2)
-        end,
-        lists:delete(node(), AllNodes)),
+            %% TODO: should use gossip to make the ring consistency on all nodes
+            AllNodes = distributed_proxy_ring:get_all_nodes(Ring2),
+            lists:foreach(
+                fun(EachNode) ->
+                    ok = set_ring(EachNode, Ring2)
+                end,
+                lists:delete(node(), AllNodes)),
 
-    {reply, ok, State#state{ring = Ring2}};
+            {reply, ok, State#state{ring = Ring2}}
+    end;
 handle_call({set_ring, NewRing}, _From, State) ->
     do_write_ringfile(NewRing),
     cache_ring(NewRing),
@@ -268,4 +275,15 @@ do_write_ringfile(Ring, FN) ->
         _:Err ->
             lager:error("Unable to write ring to \"~s\" - ~p\n", [FN, Err]),
             {error,Err}
+    end.
+
+join_cluster([]) ->
+    lager:info("The cluster haven't any node");
+join_cluster([Node|T]) ->
+    case net_adm:ping(Node) of
+        pong ->
+            lager:info("Join the cluster by ~p", [Node]),
+            ok;
+        _ ->
+            join_cluster(T)
     end.

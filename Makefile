@@ -9,3 +9,6 @@ deps:
 
 compile: deps
 	${REBAR} compile
+
+clean:
+	${REBAR} clean

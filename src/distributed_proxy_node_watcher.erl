@@ -12,7 +12,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0]).
+-export([start_link/0,nodes/0, is_up/1]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -41,6 +41,17 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+nodes() ->
+    ets:tab2list(?MODULE).
+
+is_up(Node) ->
+    case ets:lookup(?MODULE, Node) of
+        [{Node, _TimeStamp}] ->
+            true;
+        [] ->
+            false
+    end.
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -60,6 +71,14 @@ start_link() ->
     {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term()} | ignore).
 init([]) ->
+    %% Watch for node up/down events
+    ok = net_kernel:monitor_nodes(true),
+
+    %% Setup ETS table to track node status
+    ?MODULE = ets:new(?MODULE, [protected, {read_concurrency, true}, named_table]),
+
+    Now = distributed_proxy_util:moment(),
+    ets:insert(?MODULE, [{Node, Now} || Node <- [erlang:node() | erlang:nodes()]]),
     {ok, #state{}}.
 
 %%--------------------------------------------------------------------
@@ -108,6 +127,14 @@ handle_cast(_Request, State) ->
     {noreply, NewState :: #state{}} |
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), NewState :: #state{}}).
+handle_info({nodeup, Node}, State) ->
+    State2 = node_update(Node, State),
+    lager:info("Node ~p up", [Node]),
+    {noreply, State2};
+handle_info({nodedown, Node}, State) ->
+    State2 = node_down(Node, State),
+    lager:info("Node ~p down", [Node]),
+    {noreply, State2};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -144,3 +171,11 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+node_update(Node, State) ->
+    Now = distributed_proxy_util:moment(),
+    ets:insert(?MODULE, {Node, Now}),
+    State.
+
+node_down(Node, State) ->
+    ets:delete(?MODULE, Node),
+    State.
