@@ -6,7 +6,8 @@
         {applications, [
             kernel,
             stdlib,
-            lager
+            lager,
+            clique
         ]},
         {mod, {distributed_proxy_app, []}},
         {env, []}

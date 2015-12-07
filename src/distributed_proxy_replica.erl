@@ -12,13 +12,17 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/1, wait_for_init/1, get_state/1, refuse_request/1, accept_request/1]).
+-export([
+    start_link/1, wait_for_init/1,
+    get_state/1, get_slaveof_state/1,
+    slaveof_request/1, refuse_request/1, accept_request/1]).
 
 %% gen_fsm callbacks
 -export([init/1,
     warn_up/2,
     started/3,
     active/2,
+    slaveof/2,
     refuse/2,
     handle_event/3,
     handle_sync_event/4,
@@ -28,7 +32,12 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {module, module_state, index, group_index, warn_up_check_interval, warn_up_timeout}).
+-record(state, {
+    module, module_state,
+    index, group_index,
+    warn_up_check_interval, warn_up_timeout,
+    refuse_timer, slaveof_timer
+}).
 
 -include("distributed_proxy_replica.hrl").
 
@@ -52,7 +61,28 @@ wait_for_init(Pid) ->
     gen_fsm:sync_send_event(Pid, wait_for_init, infinity).
 
 get_state(Pid) ->
-    gen_fsm:sync_send_all_state_event(Pid, get_state).
+    case catch gen_fsm:sync_send_all_state_event(Pid, get_state) of
+        {ok, Res} ->
+            Res;
+        {'EXIT', Reason} ->
+            {error, Reason}
+    end.
+
+get_slaveof_state(Pid) ->
+    case catch gen_fsm:sync_send_all_state_event(Pid, get_slaveof_state) of
+        {ok, Res} ->
+            Res;
+        {'EXIT', Reason} ->
+            {error, Reason}
+    end.
+
+slaveof_request(Pid) ->
+    case catch gen_fsm:sync_send_all_state_event(Pid, slaveof) of
+        {ok, Res} ->
+            Res;
+        {'EXIT', Reason} ->
+            {error, Reason}
+    end.
 
 refuse_request(Pid) ->
     gen_fsm:send_all_state_event(Pid, refuse_request).
@@ -85,7 +115,9 @@ init([{Idx, GroupIndex}]) ->
     {ok, started, #state{
         index = Idx, group_index = GroupIndex,
         module = Module,
-        warn_up_check_interval = WarnUpCheckInterval, warn_up_timeout = WarnUpTimeout}}.
+        warn_up_check_interval = WarnUpCheckInterval, warn_up_timeout = WarnUpTimeout,
+        refuse_timer = undefined
+    }}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -141,6 +173,20 @@ active(#replica_request{request = Request, sender = Sender}, State = #state{modu
 active(Req, State) ->
     lager:error("unknown request ~p", [Req]),
     {next_state, active, State}.
+
+slaveof(#replica_request{request = Request, sender = Sender}, State = #state{module = Module, module_state = ModuleState}) ->
+    case Module:handle_request(Request, Sender, ModuleState) of
+        {reply, Reply, ModuleState2} ->
+            distributed_proxy_message:reply(Sender, Reply),
+            {next_state, slaveof, State#state{module_state = ModuleState2}};
+        {noreply, ModuleState2} ->
+            {next_state, slaveof, State#state{module_state = ModuleState2}};
+        {stop, Reason, ModuleState2} ->
+            {stop, Reason, State#state{module_state = ModuleState2}}
+    end;
+slaveof(Req, State) ->
+    lager:error("unknown request ~p", [Req]),
+    {next_state, slaveof, State}.
 
 refuse(#replica_request{sender = Sender}, State) ->
     distributed_proxy_message:reply(Sender, {error, refuse}),
@@ -201,12 +247,27 @@ started(wait_for_init, _From, State = #state{
     {next_state, NextStateName :: atom(), NewStateData :: #state{},
         timeout() | hibernate} |
     {stop, Reason :: term(), NewStateData :: #state{}}).
-handle_event(refuse_request, StateName, State = #state{index = Index, group_index = GroupIndex}) ->
-    lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, StateName, refuse]),
+
+handle_event(refuse_request, refuse, State) ->
     {next_state, refuse, State};
+handle_event(refuse_request, StateName, State = #state{
+    index = Index, group_index = GroupIndex,
+    warn_up_check_interval = CheckInterval, warn_up_timeout = Timeout,
+    refuse_timer = undefined
+}) ->
+    RefuseTimer = erlang:start_timer(CheckInterval * Timeout, self(), accept_request),
+    lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, StateName, refuse]),
+    {next_state, refuse, State#state{refuse_timer = RefuseTimer}};
+handle_event(refuse_request, StateName, State = #state{refuse_timer = RefuseTimer}) ->
+    erlang:cancel_timer(RefuseTimer),
+    handle_event(refuse_request, StateName, State#state{refuse_timer = undefined});
+
+handle_event(accept_request, active, State) ->
+    {next_state, active, State#state{refuse_timer = undefined, slaveof_timer = undefined}};
 handle_event(accept_request, StateName, State = #state{index = Index, group_index = GroupIndex}) ->
     lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, StateName, active]),
-    {next_state, active, State};
+    {next_state, active, State#state{refuse_timer = undefined, slaveof_timer = undefined}};
+
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
@@ -229,8 +290,28 @@ handle_event(_Event, StateName, State) ->
         timeout() | hibernate} |
     {stop, Reason :: term(), Reply :: term(), NewStateData :: term()} |
     {stop, Reason :: term(), NewStateData :: term()}).
+handle_sync_event(slaveof, _From, active, State = #state{
+    index = Index, group_index = GroupIndex,
+    warn_up_check_interval = CheckInterval, warn_up_timeout = Timeout,
+    slaveof_timer = undefined
+}) ->
+    SlaveofTimer = erlang:start_timer(CheckInterval * Timeout, self(), accept_request),
+    lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, active, slaveof]),
+    {reply, ok, slaveof, State#state{slaveof_timer = SlaveofTimer}};
+handle_sync_event(slaveof, From, active, State = #state{slaveof_timer = SlaveofTimer}) ->
+    erlang:cancel_timer(SlaveofTimer),
+    handle_sync_event(slaveof, From, active, State#state{slaveof_timer = undefined});
+handle_sync_event(slaveof, _From, StateName, State) ->
+    {reply, forbidden, StateName, State};
+
+handle_sync_event(get_slaveof_state, _From, slaveof, State = #state{module = Module, module_state = ModuleState}) ->
+    Result = Module:get_slaveof_state(ModuleState),
+    {reply, Result, slaveof, State};
+handle_sync_event(get_slaveof_state, _From, StateName, State) ->
+    {reply, forbidden, StateName, State};
+
 handle_sync_event(get_state, _From, StateName, State) ->
-    {reply, State#state.module_state, StateName, State}.
+    {reply, {ok, State#state.module_state}, StateName, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -247,6 +328,19 @@ handle_sync_event(get_state, _From, StateName, State) ->
     {next_state, NextStateName :: atom(), NewStateData :: term(),
         timeout() | hibernate} |
     {stop, Reason :: normal | term(), NewStateData :: term()}).
+handle_info({timeout, TimerRef, accept_request}, refuse, State = #state{
+    index = Index, group_index = GroupIndex,
+    refuse_timer = TimerRef
+}) ->
+    lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, refuse, active]),
+    {next_state, active, State#state{refuse_timer = undefined}};
+
+handle_info({timeout, TimerRef, accept_request}, slaveof, State = #state{
+    index = Index, group_index = GroupIndex,
+    slaveof_timer = TimerRef
+}) ->
+    lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, slaveof, active]),
+    {next_state, active, State#state{slaveof_timer = undefined}};
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
 
@@ -262,7 +356,14 @@ handle_info(_Info, StateName, State) ->
 %%--------------------------------------------------------------------
 -spec(terminate(Reason :: normal | shutdown | {shutdown, term()}
 | term(), StateName :: atom(), StateData :: term()) -> term()).
-terminate(_Reason, _StateName, _State) ->
+terminate(_Reason, started, _State) ->
+    ok;
+terminate(Reason, _StateName, #state{
+    index = Index, group_index = GroupIndex,
+    module = Module, module_state = ModuleState
+}) ->
+    lager:info("replica ~p_~p terminate", [Index, GroupIndex]),
+    Module:terminate(Reason, ModuleState),
     ok.
 
 %%--------------------------------------------------------------------

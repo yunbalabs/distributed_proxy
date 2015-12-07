@@ -68,11 +68,11 @@ get_nodes(GroupId, #state{node_group_dict = NodeGroup}) ->
     end.
 
 get_all_nodes(#state{node_group = NodeGroup}) ->
-    lists:foldl(
+    lists:usort(lists:foldl(
         fun({_GroupId, Nodes}, Acc) ->
             lists:merge([Nodes, Acc])
         end,
-        [], NodeGroup).
+        [], NodeGroup)).
 
 get_owners(#state{raw_ring = Ring}) ->
     ring:owners(Ring).
