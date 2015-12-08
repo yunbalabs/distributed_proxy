@@ -18,6 +18,10 @@ start() ->
 stop() ->
     application:stop(?MODULE).
 
+join_cluster([Node]) ->
+    join_cluster(Node);
+join_cluster(Node) when is_list(Node)->
+    join_cluster(list_to_atom(Node));
 join_cluster(Node) ->
     case net_adm:ping(Node) of
         pong ->
