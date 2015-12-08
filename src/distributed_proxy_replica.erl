@@ -19,8 +19,8 @@
 
 %% gen_fsm callbacks
 -export([init/1,
-    warn_up/2,
     started/3,
+    warn_up/2,
     active/2,
     slaveof/2,
     refuse/2,
@@ -63,7 +63,7 @@ wait_for_init(Pid) ->
 get_state(Pid) ->
     case catch gen_fsm:sync_send_all_state_event(Pid, get_state) of
         {ok, Res} ->
-            Res;
+            {ok, Res};
         {'EXIT', Reason} ->
             {error, Reason}
     end.
@@ -71,17 +71,19 @@ get_state(Pid) ->
 get_slaveof_state(Pid) ->
     case catch gen_fsm:sync_send_all_state_event(Pid, get_slaveof_state) of
         {ok, Res} ->
-            Res;
+            {ok, Res};
+        {error, Reason} ->
+            {error, Reason};
         {'EXIT', Reason} ->
             {error, Reason}
     end.
 
 slaveof_request(Pid) ->
     case catch gen_fsm:sync_send_all_state_event(Pid, slaveof) of
-        {ok, Res} ->
-            Res;
         {'EXIT', Reason} ->
-            {error, Reason}
+            {error, Reason};
+        Res ->
+            Res
     end.
 
 refuse_request(Pid) ->
@@ -307,8 +309,11 @@ handle_sync_event(slaveof, _From, StateName, State) ->
 handle_sync_event(get_slaveof_state, _From, slaveof, State = #state{module = Module, module_state = ModuleState}) ->
     Result = Module:get_slaveof_state(ModuleState),
     {reply, Result, slaveof, State};
+handle_sync_event(get_slaveof_state, _From, refuse, State = #state{module = Module, module_state = ModuleState}) ->
+    Result = Module:get_slaveof_state(ModuleState),
+    {reply, Result, refuse, State};
 handle_sync_event(get_slaveof_state, _From, StateName, State) ->
-    {reply, forbidden, StateName, State};
+    {reply, {error, forbidden}, StateName, State};
 
 handle_sync_event(get_state, _From, StateName, State) ->
     {reply, {ok, State#state.module_state}, StateName, State}.

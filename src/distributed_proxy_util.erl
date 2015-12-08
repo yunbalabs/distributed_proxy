@@ -10,7 +10,7 @@
 -author("zy").
 
 %% API
--export([start_app_deps/1, replace_file/2, moment/0, index_of/2, pmap/3, replica_proxy_reg_name/1]).
+-export([start_app_deps/1, replace_file/2, moment/0, index_of/2, pmap/3, replica_proxy_reg_name/1, safe_rpc/5]).
 
 %% 719528 days from Jan 1, 0 to Jan 1, 1970
 %%  *86400 seconds/day
@@ -156,6 +156,20 @@ pmap_collect_rest(Pending, Done) ->
 moment() ->
     {Mega, Sec, _Micro} = os:timestamp(),
     (Mega * 1000000) + Sec + ?SEC_TO_EPOCH.
+
+%% @doc Wraps an rpc:call/5 in a try/catch to handle the case where the
+%%      'rex' process is not running on the remote node. This is safe in
+%%      the sense that it won't crash the calling process if the rex
+%%      process is down.
+-spec safe_rpc(Node :: node(), Module :: atom(), Function :: atom(), Args :: [any()], Timeout :: timeout()) -> {'badrpc', any()} | any().
+safe_rpc(Node, Module, Function, Args, Timeout) ->
+    try rpc:call(Node, Module, Function, Args, Timeout) of
+        Result ->
+            Result
+    catch
+        'EXIT':{noproc, _NoProcDetails} ->
+            {badrpc, rpc_process_down}
+    end.
 
 index_of(Item, List) -> index_of(Item, List, 1).
 
