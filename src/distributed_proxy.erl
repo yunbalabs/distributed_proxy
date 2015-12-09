@@ -13,7 +13,7 @@
 -export([start/0, stop/0, join_cluster/1]).
 
 start() ->
-    application:start(?MODULE).
+    application:ensure_started(?MODULE).
 
 stop() ->
     application:stop(?MODULE).
