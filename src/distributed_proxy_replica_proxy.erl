@@ -110,6 +110,7 @@ handle_cast({replica_proxy_pong, Pid}, State=#state{
     ValidReply = (Pid =:= ReplicaPid) and (PingState =:= sent),
     NewState = case ValidReply of
                    true ->
+                       %% TODO: only subtracting mailbox length before ping
                        State#state{ping_state = undefined, check_counter = 0};
                    _ ->
                        State#state{ping_state = undefined}
