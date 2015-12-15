@@ -12,7 +12,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, get_replica_pid/1]).
+-export([start_link/0, get_replica_pid/1, unregister_replica/2]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -53,6 +53,9 @@ get_replica_pid(Idx) ->
             not_found
     end.
 
+unregister_replica(Idx, Pid) ->
+    gen_server:call(?SERVER, {unregister_replica, Idx, Pid}, infinity).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -91,6 +94,17 @@ init([]) ->
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), Reply :: term(), NewState :: #state{}} |
     {stop, Reason :: term(), NewState :: #state{}}).
+handle_call({unregister_replica, Idx, Pid}, _From, State) ->
+    case ets:lookup(?ETS, Idx) of
+        [{Idx, Pid}] ->
+            %% remove monitor when 'DOWN' received
+            ets:delete(?ETS, Idx);
+        [_] ->
+            ignore;
+        [] ->
+            ignore
+    end,
+    {reply, ok, State};
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
@@ -232,7 +246,7 @@ maybe_stop_replica(StopIdx) ->
          case ets:lookup(?ETS, Idx) of
              [{Idx, Pid}] ->
                  lager:debug("Will stop replica for partition ~p ~p", [Idx, Pid]),
-                 distributed_proxy_replica_sup:stop_replica(Pid);
+                 distributed_proxy_replica:trigger_stop(Pid);
              [] ->
                  ok
          end

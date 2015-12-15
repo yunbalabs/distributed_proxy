@@ -15,7 +15,8 @@
 -export([
     start_link/1, wait_for_init/1,
     get_state/1, get_slaveof_state/1,
-    slaveof_request/1, refuse_request/1, accept_request/1]).
+    slaveof_request/1, refuse_request/1, accept_request/1,
+    trigger_stop/1]).
 
 %% gen_fsm callbacks
 -export([init/1,
@@ -91,6 +92,9 @@ refuse_request(Pid) ->
 
 accept_request(Pid) ->
     gen_fsm:send_all_state_event(Pid, accept_request).
+
+trigger_stop(Pid) ->
+    gen_fsm:send_all_state_event(Pid, trigger_stop).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -270,6 +274,9 @@ handle_event(accept_request, StateName, State = #state{index = Index, group_inde
     lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, StateName, active]),
     {next_state, active, State#state{refuse_timer = undefined, slaveof_timer = undefined}};
 
+handle_event(trigger_stop, _StateName, State) ->
+    {stop, normal, State};
+
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
@@ -346,6 +353,9 @@ handle_info({timeout, TimerRef, accept_request}, slaveof, State = #state{
 }) ->
     lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, slaveof, active]),
     {next_state, active, State#state{slaveof_timer = undefined}};
+handle_info({'$replica_proxy_ping', From}, StateName, State) ->
+    distributed_proxy_replica_proxy:cast(From, {replica_proxy_pong, self()}),
+    {next_state, StateName, State};
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
 

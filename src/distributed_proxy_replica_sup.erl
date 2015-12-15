@@ -12,7 +12,7 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/0, stop_all/0, start_replica/1, stop_replica/1]).
+-export([start_link/0, stop_all/0, start_replica/1]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -40,11 +40,6 @@ stop_all() ->
 
 start_replica(Args) ->
     supervisor:start_child(?MODULE, [Args]).
-
-stop_replica(Pid) ->
-    _ = supervisor:terminate_child(?MODULE, Pid),
-    _ = supervisor:delete_child(?MODULE, Pid),
-    ok.
 
 %%%===================================================================
 %%% Supervisor callbacks

@@ -108,8 +108,22 @@ replicas_output(Node) ->
                     not_found ->
                         down
                 end,
+            ProxyCounter =
+                case IsMyReplica of
+                    true ->
+                        GroupIndex = distributed_proxy_util:index_of(Node, NodeGroup),
+                        Proxy = distributed_proxy_util:replica_proxy_reg_name(list_to_binary(lists:flatten(io_lib:format("~w_~w", [Idx, GroupIndex])))),
+                        case catch sys:get_status(Proxy, 30000) of
+                            {status, _, _, [_, _, _, _, {state, _, _, _, _, Counter, _, _, _, _}]} ->
+                                Counter;
+                            _Error2 ->
+                                0
+                        end;
+                    false ->
+                        0
+                end,
 
-            [{replica, Idx}, {own, IsMyReplica}, {status, ReplicaState}]
+            [{replica, Idx}, {own, IsMyReplica}, {status, ReplicaState}, {proxy_counter, ProxyCounter}]
         end, Owners),
 
     T0 = clique_status:text(io_lib:format("Replicas on ~p:", [Node])),
