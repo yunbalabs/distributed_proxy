@@ -178,4 +178,5 @@ node_update(Node, State) ->
 
 node_down(Node, State) ->
     ets:delete(?MODULE, Node),
+    %% TODO: shutdown when lost connections with more than half of nodes
     State.

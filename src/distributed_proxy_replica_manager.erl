@@ -141,10 +141,11 @@ handle_info(tick, State) ->
     {ok, Ring} = distributed_proxy_ring_manager:get_ring(),
     AllOwners = distributed_proxy_ring:get_owners(Ring),
 
-    %% TODO: For stopping the replica, judge by the ring of data ownership have been transfered
+    %% TODO: stopping the replica after data ownership have been transfered
     {ShouldStart, ShouldStop} = lists:partition(
-        fun({_Idx, GroupId}) ->
-            Nodes = distributed_proxy_ring:get_nodes(GroupId, Ring),
+        fun({Idx, GroupId}) ->
+            Pos = distributed_proxy_ring:index2pos({Idx, GroupId}, Ring),
+            Nodes = distributed_proxy_ring:get_nodes(Pos, Ring),
             lists:member(node(), Nodes)
         end, AllOwners),
 
@@ -213,7 +214,8 @@ schedule_management_timer() ->
 maybe_start_replica(StartIdx, Ring) ->
     StartFun =
         fun({Idx, GroupId}) ->
-            Nodes = distributed_proxy_ring:get_nodes(GroupId, Ring),
+            Pos = distributed_proxy_ring:index2pos({Idx, GroupId}, Ring),
+            Nodes = distributed_proxy_ring:get_nodes(Pos, Ring),
             GroupIndex = distributed_proxy_util:index_of(node(), Nodes),
             lager:debug("Will start replica for partition ~p_~p", [Idx, GroupIndex]),
             {ok, Pid} =

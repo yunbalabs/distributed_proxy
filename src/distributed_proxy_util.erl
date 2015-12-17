@@ -10,7 +10,7 @@
 -author("zy").
 
 %% API
--export([start_app_deps/1, replace_file/2, moment/0, index_of/2, pmap/3, replica_proxy_reg_name/1, safe_rpc/5]).
+-export([start_app_deps/1, replace_file/2, moment/0, index_of/2, setnth/3, pmap/3, replica_proxy_reg_name/1, safe_rpc/5]).
 
 %% 719528 days from Jan 1, 0 to Jan 1, 1970
 %%  *86400 seconds/day
@@ -176,6 +176,9 @@ index_of(Item, List) -> index_of(Item, List, 1).
 index_of(_, [], _)  -> not_found;
 index_of(Item, [Item|_], Index) -> Index;
 index_of(Item, [_|Tl], Index) -> index_of(Item, Tl, Index+1).
+
+setnth(1, [_|Rest], New) -> [New|Rest];
+setnth(I, [E|Rest], New) -> [E|setnth(I-1, Rest, New)].
 
 replica_proxy_reg_name(Index) ->
     AllBin = <<$d,$i,$s,$t,$r,$i,$b,$u,$t,$e,$d,$_,$p,$r,$o,$x,$y,$_,$r,$e,$p,$l,$i,$c,$a,$_,$p,$r,$o,$x,$y,$_, Index/binary>>,

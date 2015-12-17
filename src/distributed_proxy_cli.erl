@@ -120,7 +120,8 @@ map(_CmdBase, [], []) ->
 
     Rows = lists:map(
         fun ({Idx, GroupId}) ->
-            NodeGroup = distributed_proxy_ring:get_nodes(GroupId, MyRing),
+            Pos = distributed_proxy_ring:index2pos({Idx, GroupId}, MyRing),
+            NodeGroup = distributed_proxy_ring:get_nodes(Pos, MyRing),
             ReplicaMap = [{distributed_proxy_util:index_of(Node, NodeGroup), Node} || Node <- NodeGroup],
             [{replica, Idx} | ReplicaMap]
         end, Owners),
@@ -140,7 +141,8 @@ replicas_output(Node) ->
     Owners = distributed_proxy_ring:get_owners(MyRing),
     Rows = lists:map(
         fun ({Idx, GroupId}) ->
-            NodeGroup = distributed_proxy_ring:get_nodes(GroupId, MyRing),
+            Pos = distributed_proxy_ring:index2pos({Idx, GroupId}, MyRing),
+            NodeGroup = distributed_proxy_ring:get_nodes(Pos, MyRing),
             IsMyReplica = lists:member(Node, NodeGroup),
             ReplicaPid =
                 case distributed_proxy_util:safe_rpc(Node, distributed_proxy_replica_manager, get_replica_pid, [Idx], 30000) of
@@ -178,7 +180,8 @@ replica_output(Node, Replica) ->
     Owners = distributed_proxy_ring:get_owners(MyRing),
     case lists:keyfind(Replica, 1, Owners) of
         {Replica, GroupId} ->
-            NodeGroup = distributed_proxy_ring:get_nodes(GroupId, MyRing),
+            Pos = distributed_proxy_ring:index2pos({Replica, GroupId}, MyRing),
+            NodeGroup = distributed_proxy_ring:get_nodes(Pos, MyRing),
             IsMyReplica = lists:member(Node, NodeGroup),
 
             {Status, Pid} =

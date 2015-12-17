@@ -111,19 +111,23 @@ handle_call({add_node, Node}, _From, State = #state{ring = Ring}) ->
         true ->
             {reply, ok, State};
         false ->
-            Ring2 = distributed_proxy_ring:add_node(Node, Ring),
-            do_write_ringfile(Ring2),
-            cache_ring(Ring2),
+            case distributed_proxy_ring:add_node(Node, Ring) of
+                {ok, Ring2} ->
+                    do_write_ringfile(Ring2),
+                    cache_ring(Ring2),
 
-            %% TODO: should use gossip to make the ring consistency on all nodes
-            AllNodes = distributed_proxy_ring:get_all_nodes(Ring2),
-            lists:foreach(
-                fun(EachNode) ->
-                    ok = set_ring(EachNode, Ring2)
-                end,
-                lists:delete(node(), AllNodes)),
+                    %% TODO: should use gossip to make the ring consistency on all nodes
+                    AllNodes = distributed_proxy_ring:get_all_nodes(Ring2),
+                    lists:foreach(
+                        fun(EachNode) ->
+                            ok = set_ring(EachNode, Ring2)
+                        end,
+                        lists:delete(node(), AllNodes)),
 
-            {reply, ok, State#state{ring = Ring2}}
+                    {reply, ok, State#state{ring = Ring2}};
+                {still_reconciling, Ring2} ->
+                    {reply, still_reconciling, State#state{ring = Ring2}}
+            end
     end;
 handle_call({set_ring, NewRing}, _From, State) ->
     do_write_ringfile(NewRing),
