@@ -45,16 +45,16 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-get_replica_pid(Idx) ->
-    case ets:lookup(?ETS, Idx) of
-        [{Idx, Pid}] ->
+get_replica_pid({Idx, GroupIndex}) ->
+    case ets:lookup(?ETS, {Idx, GroupIndex}) of
+        [{{Idx, GroupIndex}, Pid}] ->
             {ok, Pid};
         [] ->
             not_found
     end.
 
-unregister_replica(Idx, Pid) ->
-    gen_server:call(?SERVER, {unregister_replica, Idx, Pid}, infinity).
+unregister_replica({Idx, GroupIndex}, Pid) ->
+    gen_server:call(?SERVER, {unregister_replica, {Idx, GroupIndex}, Pid}, infinity).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -94,11 +94,11 @@ init([]) ->
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), Reply :: term(), NewState :: #state{}} |
     {stop, Reason :: term(), NewState :: #state{}}).
-handle_call({unregister_replica, Idx, Pid}, _From, State) ->
-    case ets:lookup(?ETS, Idx) of
-        [{Idx, Pid}] ->
+handle_call({unregister_replica, {Idx, GroupIndex}, Pid}, _From, State) ->
+    case ets:lookup(?ETS, {Idx, GroupIndex}) of
+        [{{Idx, GroupIndex}, Pid}] ->
             %% remove monitor when 'DOWN' received
-            ets:delete(?ETS, Idx);
+            ets:delete(?ETS, {Idx, GroupIndex});
         [_] ->
             ignore;
         [] ->
@@ -139,33 +139,39 @@ handle_cast(_Request, State) ->
 handle_info(tick, State) ->
     schedule_management_timer(),
     {ok, Ring} = distributed_proxy_ring_manager:get_ring(),
-    AllOwners = distributed_proxy_ring:get_owners(Ring),
+    Map = distributed_proxy_ring:get_map(Ring),
 
-    %% TODO: stopping the replica after data ownership have been transfered
-    {ShouldStart, ShouldStop} = lists:partition(
-        fun({Idx, GroupId}) ->
-            Pos = distributed_proxy_ring:index2pos({Idx, GroupId}, Ring),
-            Nodes = distributed_proxy_ring:get_nodes(Pos, Ring),
-            lists:member(node(), Nodes)
-        end, AllOwners),
+    ShouldStart = lists:filtermap(
+        fun({Pos, Nodes}) ->
+            {Idx, _GroupId} = distributed_proxy_ring:pos2index(Pos, Ring),
+            case distributed_proxy_util:index_of(node(), Nodes) of
+                not_found ->
+                    false;
+                GroupIndex ->
+                    {true, {Idx, GroupIndex}}
+            end
+        end, Map),
+
+    Changes = distributed_proxy_ring:get_changes(node(), Ring),
 
     {ShouldStart2, _Started} = lists:partition(
-        fun({Idx, _GroupId}) ->
-            case ets:lookup(?ETS, Idx) of
-                [{Idx, Pid}] ->
+        fun({Idx, GroupIndex}) ->
+            case ets:lookup(?ETS, {Idx, GroupIndex}) of
+                [{{Idx, GroupIndex}, Pid}] ->
                     not is_process_alive(Pid);
                 []  ->
                     true
             end
-        end, ShouldStart),
+        end, Changes ++ ShouldStart),
 
-    maybe_stop_replica(ShouldStop),
-    maybe_start_replica(ShouldStart2, Ring),
+    ShouldStart3 = lists:ukeysort(1, ShouldStart2),
+
+    maybe_start_replica(ShouldStart3),
     {noreply, State};
 handle_info({'DOWN', MonRef, process, _P, _I}, State) ->
     case ets:lookup(?ETS, MonRef) of
-        [{MonRef, Idx}] ->
-            ets:delete(?ETS, Idx),
+        [{MonRef, {Idx, GroupIndex}}] ->
+            ets:delete(?ETS, {Idx, GroupIndex}),
             ets:delete(?ETS, MonRef);
         [] ->
             lager:critical("Failed to find the monref")
@@ -211,12 +217,9 @@ schedule_management_timer() ->
     ManagementTick = distributed_proxy_config:check_replica_interval(),
     erlang:send_after(ManagementTick, ?MODULE, tick).
 
-maybe_start_replica(StartIdx, Ring) ->
+maybe_start_replica(StartIdx) ->
     StartFun =
-        fun({Idx, GroupId}) ->
-            Pos = distributed_proxy_ring:index2pos({Idx, GroupId}, Ring),
-            Nodes = distributed_proxy_ring:get_nodes(Pos, Ring),
-            GroupIndex = distributed_proxy_util:index_of(node(), Nodes),
+        fun({Idx, GroupIndex}) ->
             lager:debug("Will start replica for partition ~p_~p", [Idx, GroupIndex]),
             {ok, Pid} =
                 distributed_proxy_replica_sup:start_replica({Idx, GroupIndex}),
@@ -224,7 +227,7 @@ maybe_start_replica(StartIdx, Ring) ->
             case distributed_proxy_replica:wait_for_init(Pid) of
                 ok ->
                     lager:debug("Replica initialization ready ~p, ~p_~p", [Pid, Idx, GroupIndex]),
-                    {Idx, Pid};
+                    {{Idx, GroupIndex}, Pid};
                 Error ->
                     lager:error("Replica initialization failed ~p ~p_~p ~p", [Pid, Idx, GroupIndex, Error]),
                     {error, Error}
@@ -237,19 +240,8 @@ maybe_start_replica(StartIdx, Ring) ->
          case Result of
              {error, _} ->
                  try_again_later;
-             {Idx, Pid} ->
+             {{Idx, GroupIndex}, Pid} ->
                  MonRef = erlang:monitor(process, Pid),
-                 ets:insert(?ETS, [{Idx, Pid}, {MonRef, Idx}])
+                 ets:insert(?ETS, [{{Idx, GroupIndex}, Pid}, {MonRef, {Idx, GroupIndex}}])
          end
      end || Result <- StartResult].
-
-maybe_stop_replica(StopIdx) ->
-    [begin
-         case ets:lookup(?ETS, Idx) of
-             [{Idx, Pid}] ->
-                 lager:debug("Will stop replica for partition ~p ~p", [Idx, Pid]),
-                 distributed_proxy_replica:trigger_stop(Pid);
-             [] ->
-                 ok
-         end
-     end || {Idx, _GroupId} <- StopIdx].

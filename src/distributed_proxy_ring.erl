@@ -13,8 +13,10 @@
 -export([
     create/0, create/1,
     add_node/2,
-    get_chashbin/1, index2pos/2, get_nodes/2, get_all_nodes/1, get_owners/1, get_changes/2,
-    complete_change/3
+    get_chashbin/1,
+    index2pos/2, pos2index/2, idx2pos/2,
+    get_nodes/2, get_ideal_nodes/2, get_all_nodes/1, get_owners/1, get_map/1, get_changes/2, get_all_changes/1,
+    complete_change/3, merge_ring/2
 ]).
 
 -record(state, {
@@ -76,11 +78,26 @@ get_chashbin(#state{chashbin = CHBin}) ->
 index2pos({Idx, GroupId}, #state{raw_ring = Ring}) ->
     distributed_proxy_util:index_of({Idx, GroupId}, ring:owners(Ring)) - 1.
 
+pos2index(Pos, #state{raw_ring = Ring}) ->
+    lists:nth(Pos + 1, ring:owners(Ring)).
+
+idx2pos(Idx, State = #state{raw_ring = Ring}) ->
+    GroupId = ring:idx2node(Ring, Idx),
+    index2pos({Idx, GroupId}, State).
+
 get_nodes(Pos, #state{node_map_dict = NodeMap}) ->
     case dict:find(Pos, NodeMap) of
         {ok, Nodes} ->
             Nodes;
         error ->
+            []
+    end.
+
+get_ideal_nodes(GroupId, #state{node_group = NodeGroup}) ->
+    case lists:keyfind(GroupId, 1, NodeGroup) of
+        {GroupId, Nodes} ->
+            Nodes;
+        false ->
             []
     end.
 
@@ -94,6 +111,9 @@ get_all_nodes(#state{node_group = NodeGroup}) ->
 get_owners(#state{raw_ring = Ring}) ->
     ring:owners(Ring).
 
+get_map(#state{node_map = Map}) ->
+    Map.
+
 get_changes(Node, #state{node_group = NodeGroup, next = Next}) ->
     lists:filtermap(
         fun({Idx, _OldGroupId, NewGroupId}) ->
@@ -106,21 +126,30 @@ get_changes(Node, #state{node_group = NodeGroup, next = Next}) ->
             end
         end, Next).
 
+get_all_changes(#state {next = Next}) ->
+    Next.
+
 complete_change(Node, {Idx, GroupIndex}, State = #state{raw_ring = Ring, node_group = NodeGroup, next = Next, node_map = NodeMap}) ->
     GroupId = ring:idx2node(Ring, Idx),
-    Pos = distributed_proxy_util:index_of({Idx, GroupId}, ring:owners(Ring)) - 1,
-    {Pos, OldNodes} = lists:keyfind(Pos, 1, NodeMap),
-    NewNodes = distributed_proxy_util:setnth(GroupIndex, OldNodes, Node),
-    NewNodeMap = lists:keyreplace(Pos, 1, NodeMap, {Pos, NewNodes}),
     {GroupId, WantedNodes} = lists:keyfind(GroupId, 1, NodeGroup),
-    NewNext =
-        case NewNodes =:= WantedNodes of
-            true ->
-                lists:keydelete(Idx, 1, Next);
-            false ->
-                Next
-        end,
-    State#state{next = NewNext, node_map = NewNodeMap, node_map_dict = dict:from_list(NewNodeMap)}.
+    case lists:keymember(Idx, 1, Next) andalso lists:member(Node, WantedNodes) of
+        true ->
+            Pos = distributed_proxy_util:index_of({Idx, GroupId}, ring:owners(Ring)) - 1,
+            {Pos, OldNodes} = lists:keyfind(Pos, 1, NodeMap),
+            NewNodes = distributed_proxy_util:setnth(GroupIndex, OldNodes, Node),
+            NewNodeMap = lists:keyreplace(Pos, 1, NodeMap, {Pos, NewNodes}),
+            NewNext =
+                case NewNodes =:= WantedNodes of
+                    true ->
+                        lists:keydelete(Idx, 1, Next);
+                    false ->
+                        Next
+                end,
+            State#state{next = NewNext, node_map = NewNodeMap, node_map_dict = dict:from_list(NewNodeMap)};
+        false ->
+            lager:debug("complete_change request isn't valid ~p ~p", [Node, {Idx, GroupIndex}]),
+            State
+    end.
 
 %% reconcile the ring
 reconcile(State = #state{
@@ -150,3 +179,34 @@ reconcile(State = #state{
     };
 reconcile(State) ->
     State.
+
+merge_ring(State, State) ->
+    State;
+merge_ring(
+        _State = #state{slot_num = SlotNum, replica_size = ReplicaSize, node_group = NodeGroup},
+        NewState = #state{slot_num = SlotNum, replica_size = ReplicaSize, node_group = NewNodeGroup}
+) when length(NewNodeGroup) > length(NodeGroup) ->
+    NewState;
+merge_ring(
+        _State = #state{slot_num = SlotNum, replica_size = ReplicaSize, node_group = NodeGroup, free_node = FreeNode},
+        NewState = #state{slot_num = SlotNum, replica_size = ReplicaSize, node_group = NodeGroup, free_node = NewFreeNode}
+) when length(NewFreeNode) > length(FreeNode) ->
+    NewState;
+merge_ring(
+        State = #state{slot_num = SlotNum, replica_size = ReplicaSize, node_group = NodeGroup, free_node = FreeNode, next = Next},
+        _NewState = #state{slot_num = SlotNum, replica_size = ReplicaSize, node_group = NodeGroup, free_node = FreeNode, next = NewNext}
+) ->
+    MergedState = lists:foldl(
+        fun ({Idx, _GroupId, NewGroupId}, AccState) ->
+            case lists:keymember(Idx, 1, NewNext) of
+                true ->
+                    AccState;
+                false ->
+                    {NewGroupId, WantedNodes} = lists:keyfind(NewGroupId, 1, NodeGroup),
+                    Pos = index2pos({Idx, NewGroupId}, State),
+                    NewNodeMap = lists:keyreplace(Pos, 1, AccState#state.node_map, {Pos, WantedNodes}),
+                    NewNext = lists:keydelete(Idx, 1, AccState#state.next),
+                    AccState#state{node_map = NewNodeMap, next = NewNext}
+            end
+        end, State, Next),
+    MergedState#state{node_map_dict = dict:from_list(MergedState#state.node_map)}.

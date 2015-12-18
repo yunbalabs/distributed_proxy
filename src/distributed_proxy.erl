@@ -25,7 +25,8 @@ join_cluster(Node) when is_list(Node)->
 join_cluster(Node) ->
     case net_adm:ping(Node) of
         pong ->
-            rpc:call(Node, distributed_proxy_ring_manager, add_node, [node()]);
+            rpc:call(Node, distributed_proxy_ring_manager, add_node, [node()]),
+            distributed_proxy_replica_sup:stop_all();
         _ ->
             not_started
     end.

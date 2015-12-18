@@ -11,7 +11,7 @@
 
 %% API
 -export([
-    start_link/3, get_my_replica_pid/1, call/2, call/3, cast/2,
+    start_link/3, get_my_replica_pid/1, forget_my_replica/1, call/2, call/3, cast/2,
     system_continue/3, system_terminate/4, system_code_change/4
 ]).
 
@@ -32,6 +32,9 @@ start_link(IndexName, Idx, GroupIndex) ->
 
 get_my_replica_pid(ProxyName) ->
     call(ProxyName, get_replica_pid).
+
+forget_my_replica(ProxyName) ->
+    call(ProxyName, forget_replica).
 
 call(Name, Msg) ->
     call_reply(catch gen:call(Name, '$replica_proxy_call', Msg)).
@@ -101,6 +104,10 @@ handle_call(get_replica_pid, _From, State) ->
             {reply, not_started, State}
     end;
 
+handle_call(forget_replica, _From, State) ->
+    NewState = forget_replica(State),
+    {reply, ok, NewState};
+
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
@@ -128,6 +135,7 @@ handle_proxy(Msg = {'$gen_event', #replica_request{sender = Sender}}, State) ->
                     NewState2
             end;
         not_started ->
+            %% TODO: if the replica isn't in the ring, forward the msg to the right proxy
             distributed_proxy_message:reply(Sender, {temporarily_unavailable, not_started}),
             State
     end;
@@ -145,8 +153,8 @@ handle_proxy(Msg, State) ->
             State
     end.
 
-get_replica_pid(State = #state{index=Index, replica_pid = undefined}) ->
-    case distributed_proxy_replica_manager:get_replica_pid(Index) of
+get_replica_pid(State = #state{index = Index, group_index = GroupIndex, replica_pid = undefined}) ->
+    case distributed_proxy_replica_manager:get_replica_pid({Index, GroupIndex}) of
         {ok, Pid} ->
             Mref = erlang:monitor(process, Pid),
             {Pid, State#state{replica_pid = Pid, replica_monitor = Mref}};
@@ -160,7 +168,7 @@ forget_replica(State) ->
     State#state{replica_pid = undefined, replica_monitor = undefined, check_counter = 0, ping_state = undefined}.
 
 overload_threshold_check(ReplicaPid, State = #state{
-    index = Idx,
+    index = Idx, group_index = GroupIndex,
     check_counter = Counter, ping_state = PingState,
     check_ping_interval = PingInterval, check_interval = Interval, check_overload_threshold = OverloadThreshold
 }) ->
@@ -208,7 +216,7 @@ overload_threshold_check(ReplicaPid, State = #state{
             {ok, State#state{check_counter = NewCounter, ping_state = NewPingState}};
         false ->
             NewState = forget_replica(State),
-            distributed_proxy_replica_manager:unregister_replica(Idx, ReplicaPid),
+            distributed_proxy_replica_manager:unregister_replica({Idx, GroupIndex}, ReplicaPid),
             distributed_proxy_replica:trigger_stop(ReplicaPid),
             {overload, NewState}
     end.

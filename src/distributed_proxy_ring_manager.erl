@@ -12,7 +12,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, add_node/1, set_ring/1, set_ring/2, get_ring/0]).
+-export([start_link/0, add_node/1, set_ring/1, set_ring/2, complete_change/2, get_ring/0, fix_ring/0]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -47,11 +47,27 @@ start_link() ->
 add_node(Node) ->
     gen_server:call(?SERVER, {add_node, Node}, infinity).
 
+fix_ring() ->
+    gen_server:call(?SERVER, fix_ring, infinity).
+
 set_ring(Ring) ->
     set_ring(node(), Ring).
 
 set_ring(Node, Ring) ->
-    gen_server:call({?SERVER, Node}, {set_ring, Ring}, infinity).
+    case catch gen_server:call({?SERVER, Node}, {set_ring, Ring}) of
+        ok ->
+            ok;
+        {'EXIT', Reason} ->
+            {error, Reason}
+    end.
+
+complete_change(Node, {Idx, GroupIndex, NewNode}) ->
+    case catch gen_server:call({?SERVER, Node}, {complete_change, {Idx, GroupIndex, NewNode}}) of
+        ok ->
+            ok;
+        {'EXIT', Reason} ->
+            {error, Reason}
+    end.
 
 get_ring() ->
     try
@@ -61,6 +77,7 @@ get_ring() ->
         Error ->
             {error, Error}
     end.
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -86,9 +103,17 @@ init([]) ->
             {stop, Reason};
         Ring ->
             AllNodes = distributed_proxy_ring:get_all_nodes(Ring),
-            join_cluster(lists:delete(node(), AllNodes)),
-            cache_ring(Ring),
-            {ok, #state{ring = Ring}}
+            OtherNodes = lists:delete(node(), AllNodes),
+            join_cluster(OtherNodes),
+            Ring2 = fix_ring(OtherNodes, Ring),
+            case Ring2 of
+                Ring ->
+                    cache_ring(Ring2),
+                    {ok, #state{ring = Ring2}};
+                _ ->
+                    lager:info("the ring has been fixed"),
+                    update_ring(Ring2, #state{ring = Ring})
+            end
     end.
 
 %%--------------------------------------------------------------------
@@ -113,26 +138,49 @@ handle_call({add_node, Node}, _From, State = #state{ring = Ring}) ->
         false ->
             case distributed_proxy_ring:add_node(Node, Ring) of
                 {ok, Ring2} ->
-                    do_write_ringfile(Ring2),
-                    cache_ring(Ring2),
+                    {ok, NewState} = update_ring(Ring2, State),
 
                     %% TODO: should use gossip to make the ring consistency on all nodes
                     AllNodes = distributed_proxy_ring:get_all_nodes(Ring2),
                     lists:foreach(
                         fun(EachNode) ->
-                            ok = set_ring(EachNode, Ring2)
+                            case set_ring(EachNode, Ring2) of
+                                ok ->
+                                    ok;
+                                {error, Reason} ->
+                                    lager:error("update the ring failed ~p on ~p", [Reason, EachNode])
+                            end
                         end,
                         lists:delete(node(), AllNodes)),
 
-                    {reply, ok, State#state{ring = Ring2}};
+                    {reply, ok, NewState};
                 {still_reconciling, Ring2} ->
                     {reply, still_reconciling, State#state{ring = Ring2}}
             end
     end;
+
 handle_call({set_ring, NewRing}, _From, State) ->
-    do_write_ringfile(NewRing),
-    cache_ring(NewRing),
-    {reply, ok, State#state{ring = NewRing}};
+    {ok, NewState} = update_ring(NewRing, State),
+    {reply, ok, NewState};
+
+handle_call({complete_change, {Idx, GroupIndex, NewNode}}, _From, State = #state{ring = Ring}) ->
+    Ring2 = distributed_proxy_ring:complete_change(NewNode, {Idx, GroupIndex}, Ring),
+    {ok, NewState} = update_ring(Ring2, State),
+    {reply, ok, NewState};
+
+handle_call(fix_ring, _From, State=#state{ring = Ring}) ->
+    AllNodes = distributed_proxy_ring:get_all_nodes(Ring),
+    OtherNodes = lists:delete(node(), AllNodes),
+    Ring2 = fix_ring(OtherNodes, Ring),
+    case Ring2 of
+        Ring ->
+            {reply, ok, State};
+        _ ->
+            lager:info("the ring has been fixed"),
+            {ok, NewState} = update_ring(Ring2, State),
+            {reply, ok, NewState}
+    end;
+
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
@@ -149,7 +197,7 @@ handle_call(_Request, _From, State) ->
     {stop, Reason :: term(), NewState :: #state{}}).
 handle_cast(write_ringfile, State=#state{ring=Ring}) ->
     ok = do_write_ringfile(Ring),
-    {noreply,State};
+    {noreply, State};
 
 handle_cast(_Request, State) ->
     {noreply, State}.
@@ -230,6 +278,14 @@ reload_ring() ->
             {error, Reason}
     end.
 
+update_ring(NewRing, State = #state{ring = OldRing}) ->
+    do_write_ringfile(NewRing),
+    cache_ring(NewRing),
+    OldMap = distributed_proxy_ring:get_map(OldRing),
+    NewMap = distributed_proxy_ring:get_map(NewRing),
+    shutdown_unnecessary_replicas(OldMap, NewMap, OldRing),
+    {ok, State#state{ring = NewRing}}.
+
 cache_ring(Ring) ->
     Actions = [
         {ring, Ring}
@@ -291,3 +347,53 @@ join_cluster([Node|T]) ->
         _ ->
             join_cluster(T)
     end.
+
+shutdown_unnecessary_replicas([], [], _Ring) ->
+    ok;
+shutdown_unnecessary_replicas([{Pos, OldNodes} | OldMap], [{Pos, NewNodes} | NewMap], Ring) ->
+    case OldNodes =:= NewNodes of
+        true ->
+            shutdown_unnecessary_replicas(OldMap, NewMap, Ring);
+        false ->
+            shutdown_unnecessary_replica(OldNodes, NewNodes, Pos, 1, Ring),
+            shutdown_unnecessary_replicas(OldMap, NewMap, Ring)
+    end.
+
+shutdown_unnecessary_replica([], [], _, _, _) ->
+    ok;
+shutdown_unnecessary_replica([Same | OldNodes], [Same | NewNodes], Pos, GroupIndex, Ring) ->
+    shutdown_unnecessary_replica(OldNodes, NewNodes, Pos, GroupIndex + 1, Ring);
+shutdown_unnecessary_replica([Node | OldNodes], [_ | NewNodes], Pos, GroupIndex, Ring) ->
+    case node() of
+        Node ->
+            {Idx, _} = distributed_proxy_ring:pos2index(Pos, Ring),
+            ProxyName = distributed_proxy_util:replica_proxy_reg_name(list_to_binary(lists:flatten(io_lib:format("~w_~w", [Idx, GroupIndex])))),
+            case distributed_proxy_replica_proxy:get_my_replica_pid(ProxyName) of
+                {ok, Pid} ->
+                    distributed_proxy_replica_manager:unregister_replica({Idx, GroupIndex}, Pid),
+                    distributed_proxy_replica_proxy:forget_my_replica(ProxyName),
+                    distributed_proxy_replica:trigger_stop(Pid);
+                not_started ->
+                    ignore
+            end;
+        _ ->
+            ignore
+    end,
+    shutdown_unnecessary_replica(OldNodes, NewNodes, Pos, GroupIndex + 1, Ring).
+
+fix_ring([], Ring) ->
+    Ring;
+fix_ring([Node | Else], Ring) ->
+    Ring2 =
+        case lists:member(Node, nodes()) of
+            true ->
+                case distributed_proxy_util:safe_rpc(Node, distributed_proxy_ring_manager, get_ring, [], 10000) of
+                    {ok, NodeRing} ->
+                        distributed_proxy_ring:merge_ring(Ring, NodeRing);
+                    _ ->
+                        Ring
+                end;
+            false ->
+                Ring
+        end,
+    fix_ring(Else, Ring2).

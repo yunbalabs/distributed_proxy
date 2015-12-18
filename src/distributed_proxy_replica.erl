@@ -150,9 +150,13 @@ warn_up(check_tick, State = #state{
 }) ->
     case Module:check_warnup_state(ModuleState) of
         {ok, up, ModuleState2} ->
-            replica_actived(State),
-            lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, warn_up, active]),
-            {next_state, active, State#state{module_state = ModuleState2}};
+            case replica_actived(State) of
+                {ok, NewState} ->
+                    lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, warn_up, active]),
+                    {next_state, active, NewState#state{module_state = ModuleState2}};
+                {error, Reason} ->
+                    {stop, Reason, State}
+            end;
         {ok, _, ModuleState2} ->
             gen_fsm:send_event_after(CheckInterval, check_tick),
             {next_state, warn_up, State#state{module_state = ModuleState2, warn_up_timeout = Timeout - 1}};
@@ -397,6 +401,36 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-replica_actived(_State) ->
-    %% TODO: update the ring
-    ok.
+replica_actived(State = #state{
+    index = Index, group_index = GroupIndex,
+    module = Module, module_state = ModuleState
+}) ->
+    {ok, Ring} = distributed_proxy_ring_manager:get_ring(),
+    Pos = distributed_proxy_ring:idx2pos(Index, Ring),
+    Nodes = distributed_proxy_ring:get_nodes(Pos, Ring),
+    case distributed_proxy_util:index_of(node(), Nodes) of
+        not_found ->
+            ok = distributed_proxy_ring_manager:complete_change(node(), {Index, GroupIndex, node()}),
+
+            %% TODO: should use gossip to make the ring consistency on all nodes
+            AllNodes = distributed_proxy_ring:get_all_nodes(Ring),
+            lists:foreach(
+                fun(EachNode) ->
+                    case distributed_proxy_ring_manager:complete_change(EachNode, {Index, GroupIndex, node()}) of
+                        ok ->
+                            ok;
+                        {error, Reason} ->
+                            lager:error("complete change ~p failed ~p on ~p", [{Index, GroupIndex, node()}, Reason, EachNode])
+                    end
+                end,
+                lists:delete(node(), AllNodes));
+        GroupIndex ->
+            ok
+    end,
+
+    case Module:actived(ModuleState) of
+        {ok, NewModuleState} ->
+            {ok, State#state{module_state = NewModuleState}};
+        {error, Reason} ->
+            {error, Reason}
+    end.

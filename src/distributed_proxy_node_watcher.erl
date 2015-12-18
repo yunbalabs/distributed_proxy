@@ -79,6 +79,8 @@ init([]) ->
 
     Now = distributed_proxy_util:moment(),
     ets:insert(?MODULE, [{Node, Now} || Node <- [erlang:node() | erlang:nodes()]]),
+
+    %% TODO: broadcast self state to all nodes periodically
     {ok, #state{}}.
 
 %%--------------------------------------------------------------------
