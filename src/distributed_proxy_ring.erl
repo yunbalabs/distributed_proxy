@@ -22,12 +22,14 @@
 -record(state, {
     raw_ring,
     node_group,
+    %% TODO: get_peers api
+    peers = [],
     free_node,
     slot_num,
     replica_size,
     chashbin,
     node_map,
-    next,
+    next = [],
     node_map_dict
 }).
 
@@ -49,7 +51,7 @@ create(NodeName) ->
     #state{
         raw_ring = Ring,
         node_group = NodeGroup, free_node = FreeNode,
-        node_map = NodeMap, next = [], node_map_dict = dict:from_list(NodeMap),
+        node_map = NodeMap, node_map_dict = dict:from_list(NodeMap),
         slot_num = SlotNum, replica_size = ReplicaSize,
         chashbin = ring:to_bin(Ring)
     }.
@@ -209,4 +211,6 @@ merge_ring(
                     AccState#state{node_map = NewNodeMap, next = NewNext}
             end
         end, State, Next),
-    MergedState#state{node_map_dict = dict:from_list(MergedState#state.node_map)}.
+    MergedState#state{node_map_dict = dict:from_list(MergedState#state.node_map)};
+merge_ring(State, _NewState) ->
+    State.

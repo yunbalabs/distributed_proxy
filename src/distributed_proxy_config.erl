@@ -13,7 +13,9 @@
 -export([
     slot_num/0, replica_size/0, check_replica_interval/0,
     replica_parallel_start_count/0, replica_module/0, warn_up_check_interval/0,
-    warn_up_timeout/0, replica_proxy_ping_interval/0, replica_proxy_check_interval/0, replica_proxy_overload_threshold/0,
+    warn_up_timeout/0,
+    replica_proxy_ping_interval/0, replica_proxy_check_interval/0, replica_proxy_overload_threshold/0,
+    broadcast_interval/0,
     set/2, set/1, get/1]).
 
 -define(DEFAULT_SLOT_NUM, 128).
@@ -26,6 +28,7 @@
 -define(DEFAULT_REPLICA_PROXY_PING_INTERVAL, 2500).                     %% ping every 2500 times
 -define(DEFAULT_REPLICA_PROXY_CHECK_INTERVAL, 5000).                    %% check more than 5000 times
 -define(DEFAULT_REPLICA_PROXY_OVERLOAD_THRESHOLD, 10000).               %% overload more than 10000 times
+-define(DEFAULT_BROADCAST_INTERVAL, 10000).                             %% 10 s
 
 slot_num() ->
     {ok, App}  = application:get_application(?MODULE),
@@ -67,6 +70,10 @@ replica_proxy_overload_threshold() ->
     {ok, App}  = application:get_application(?MODULE),
     application:get_env(App, replica_proxy_overload_threshold, ?DEFAULT_REPLICA_PROXY_OVERLOAD_THRESHOLD).
 
+broadcast_interval() ->
+    {ok, App}  = application:get_application(?MODULE),
+    application:get_env(App, broadcast_interval, ?DEFAULT_BROADCAST_INTERVAL).
+
 set(check_replica_interval, Interval) when is_integer(Interval), Interval > 0 ->
     {ok, App}  = application:get_application(?MODULE),
     application:set_env(App, check_replica_interval, Interval);
@@ -89,7 +96,10 @@ set(replica_proxy_check_interval, Interval) when is_integer(Interval), Interval 
 set(replica_proxy_overload_threshold, Threshold) when is_integer(Threshold), Threshold > 0 ->
     {ok, App}  = application:get_application(?MODULE),
     application:set_env(App, replica_proxy_overload_threshold, Threshold),
-    distributed_proxy_replica_proxy_sup:stop_all().
+    distributed_proxy_replica_proxy_sup:stop_all();
+set(broadcast_interval, Interval) when is_integer(Interval), Interval > 0 ->
+    {ok, App}  = application:get_application(?MODULE),
+    application:set_env(App, broadcast_interval, Interval).
 
 set([NameStr, IntegerStr]) ->
     Name = list_to_atom(NameStr),
