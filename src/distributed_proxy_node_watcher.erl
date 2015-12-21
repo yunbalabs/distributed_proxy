@@ -146,6 +146,7 @@ handle_info({nodedown, Node}, State) ->
     {noreply, State2};
 handle_info(broadcast, State) ->
     {ok, MyRing} = distributed_proxy_ring_manager:get_ring(),
+    %% TODO: use get_peers
     AllNodes = distributed_proxy_ring:get_all_nodes(MyRing),
     State2 = broadcast(AllNodes, State),
     {noreply, State2};
@@ -168,6 +169,7 @@ handle_info(_Info, State) ->
 terminate(_Reason, State) ->
     case distributed_proxy_ring_manager:get_ring() of
         {ok, MyRing} ->
+            %% TODO: use get_peers
             AllNodes = distributed_proxy_ring:get_all_nodes(MyRing),
             broadcast(AllNodes, State#state { status = down });
         {error, _} ->
