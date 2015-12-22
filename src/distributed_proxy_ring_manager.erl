@@ -109,6 +109,7 @@ init([]) ->
             case Ring2 of
                 Ring ->
                     cache_ring(Ring2),
+                    distributed_proxy_ring_events:ring_update(Ring2),
                     {ok, #state{ring = Ring2}};
                 _ ->
                     lager:info("the ring has been fixed"),
@@ -281,9 +282,12 @@ reload_ring() ->
 update_ring(NewRing, State = #state{ring = OldRing}) ->
     do_write_ringfile(NewRing),
     cache_ring(NewRing),
+    distributed_proxy_ring_events:ring_update(NewRing),
+
     OldMap = distributed_proxy_ring:get_map(OldRing),
     NewMap = distributed_proxy_ring:get_map(NewRing),
     shutdown_unnecessary_replicas(OldMap, NewMap, OldRing),
+
     {ok, State#state{ring = NewRing}}.
 
 cache_ring(Ring) ->
@@ -373,7 +377,7 @@ shutdown_unnecessary_replica([Node | OldNodes], [_ | NewNodes], Pos, GroupIndex,
                     distributed_proxy_replica_manager:unregister_replica({Idx, GroupIndex}, Pid),
                     distributed_proxy_replica_proxy:forget_my_replica(ProxyName),
                     distributed_proxy_replica:trigger_stop(Pid);
-                not_started ->
+                _ ->
                     ignore
             end;
         _ ->

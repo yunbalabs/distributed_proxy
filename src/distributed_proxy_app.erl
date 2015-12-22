@@ -21,7 +21,14 @@ start(_StartType, _StartArgs) ->
     clique:register_node_finder(F),
     clique:register(?CLI_MODULES),
 
-    distributed_proxy_sup:start_link().
+    case distributed_proxy_sup:start_link() of
+        {ok, SupPid} ->
+            {ok, Ring} = distributed_proxy_ring_manager:get_ring(),
+            distributed_proxy_ring_events:ring_sync_update(Ring),
+            {ok, SupPid};
+        {error, Reason} ->
+            {error, Reason}
+    end.
 
 stop(_State) ->
     ok.

@@ -22,8 +22,6 @@
 -record(state, {
     raw_ring,
     node_group,
-    %% TODO: get_peers api
-    peers = [],
     free_node,
     slot_num,
     replica_size,

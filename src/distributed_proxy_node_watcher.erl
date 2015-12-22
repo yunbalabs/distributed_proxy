@@ -12,7 +12,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0,nodes/0, is_up/1]).
+-export([start_link/0,nodes/0, is_up/1, peers/0]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -26,7 +26,8 @@
 
 -record(state, {
     bcast_tref = undefined,
-    status = up
+    status = up,
+    peers = []
 }).
 
 %%%===================================================================
@@ -55,6 +56,9 @@ is_up(Node) ->
             false
     end.
 
+peers() ->
+    gen_server:call(?SERVER, {get_peers}).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -74,6 +78,11 @@ is_up(Node) ->
     {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term()} | ignore).
 init([]) ->
+    %% Setup callback notification for ring changes; note that we use the
+    %% supervised variation so that the callback gets removed if this process
+    %% exits
+    watch_for_ring_events(),
+
     %% Watch for node up/down events
     ok = net_kernel:monitor_nodes(true),
 
@@ -100,6 +109,8 @@ init([]) ->
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), Reply :: term(), NewState :: #state{}} |
     {stop, Reason :: term(), NewState :: #state{}}).
+handle_call({get_peers}, _From, State) ->
+    {reply, {ok, State#state.peers}, State};
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
@@ -121,6 +132,12 @@ handle_cast({up, Node}, State) ->
 handle_cast({down, Node}, State) ->
     State2 = node_down(Node, State),
     {noreply, State2};
+
+handle_cast({ring_update, R}, State) ->
+    Peers0 = distributed_proxy_ring:get_all_nodes(R),
+    Peers = lists:delete(node(), Peers0),
+
+    {noreply, State#state{peers = Peers}};
 
 handle_cast(_Request, State) ->
     {noreply, State}.
@@ -144,12 +161,16 @@ handle_info({nodeup, _Node}, State) ->
 handle_info({nodedown, Node}, State) ->
     State2 = node_down(Node, State),
     {noreply, State2};
-handle_info(broadcast, State) ->
-    {ok, MyRing} = distributed_proxy_ring_manager:get_ring(),
-    %% TODO: use get_peers
-    AllNodes = distributed_proxy_ring:get_all_nodes(MyRing),
-    State2 = broadcast(AllNodes, State),
+
+handle_info(broadcast, State = #state{peers = Peers}) ->
+    State2 = broadcast(Peers, State),
     {noreply, State2};
+
+handle_info({gen_event_EXIT, _, _}, State) ->
+    %% Ring event handler has been removed for some reason; re-register
+    watch_for_ring_events(),
+    {noreply, State};
+
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -166,15 +187,8 @@ handle_info(_Info, State) ->
 %%--------------------------------------------------------------------
 -spec(terminate(Reason :: (normal | shutdown | {shutdown, term()} | term()),
         State :: #state{}) -> term()).
-terminate(_Reason, State) ->
-    case distributed_proxy_ring_manager:get_ring() of
-        {ok, MyRing} ->
-            %% TODO: use get_peers
-            AllNodes = distributed_proxy_ring:get_all_nodes(MyRing),
-            broadcast(AllNodes, State#state { status = down });
-        {error, _} ->
-            ignore
-    end,
+terminate(_Reason, State = #state{peers = Peers}) ->
+    broadcast(Peers, State#state { status = down }),
     ok.
 
 %%--------------------------------------------------------------------
@@ -238,3 +252,10 @@ broadcast(Nodes, State) ->
     end,
     gen_server:abcast(Nodes, ?MODULE, Msg),
     schedule_broadcast(State).
+
+watch_for_ring_events() ->
+    Self = self(),
+    Fn = fun(R) ->
+        gen_server:cast(Self, {ring_update, R})
+         end,
+    distributed_proxy_ring_events:add_sup_callback(Fn).

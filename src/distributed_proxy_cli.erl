@@ -110,8 +110,8 @@ locate_register() ->
         fun locate/3].                               % Implementation callback
 
 status(_CmdBase, [], []) ->
-    {ok, MyRing} = distributed_proxy_ring_manager:get_ring(),
-    AllNodes = distributed_proxy_ring:get_all_nodes(MyRing),
+    {ok, Peers} = distributed_proxy_node_watcher:peers(),
+    AllNodes = lists:usort([node() | Peers]),
 
     Rows =[format_status(Node, distributed_proxy_node_watcher:is_up(Node)) || Node <- AllNodes ],
 
