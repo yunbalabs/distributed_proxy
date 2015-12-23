@@ -228,9 +228,10 @@ maybe_start_replica(StartIdx) ->
                 ok ->
                     lager:debug("Replica initialization ready ~p, ~p_~p", [Pid, Idx, GroupIndex]),
                     {{Idx, GroupIndex}, Pid};
-                Error ->
-                    lager:error("Replica initialization failed ~p ~p_~p ~p", [Pid, Idx, GroupIndex, Error]),
-                    {error, Error}
+                {error, Reason} ->
+                    distributed_proxy_replica:trigger_stop(Pid),
+                    lager:error("Replica initialization failed ~p ~p_~p ~p", [Pid, Idx, GroupIndex, Reason]),
+                    {error, Reason}
             end
         end,
     MaxStart = distributed_proxy_config:replica_parallel_start_count(),

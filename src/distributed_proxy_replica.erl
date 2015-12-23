@@ -239,7 +239,7 @@ started(wait_for_init, _From, State = #state{
 
             {reply, ok, warn_up, State#state{module_state = ModuleState}};
         {error, Reason} ->
-            {stop, Reason, State}
+            {reply, {error, Reason}, started, State}
     end.
 
 %%--------------------------------------------------------------------
