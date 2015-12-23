@@ -166,6 +166,8 @@ handle_info(tick, State) ->
 
     ShouldStart3 = lists:ukeysort(1, ShouldStart2),
 
+    %% TODO: dynamic config for forbidding some replicas start
+
     maybe_start_replica(ShouldStart3),
     {noreply, State};
 handle_info({'DOWN', MonRef, process, _P, _I}, State) ->
