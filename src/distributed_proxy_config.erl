@@ -18,7 +18,7 @@
     broadcast_interval/0,
     set/2, set/1, get/1]).
 
--define(DEFAULT_SLOT_NUM, 128).
+-define(DEFAULT_SLOT_NUM, 32).
 -define(DEFAULT_REPLICA_SIZE, 2).
 -define(DEFAULT_CHECK_REPLICA_INTERVAL, 10000).                         %% 10 s
 -define(DEFAULT_REPLICA_PARALLEL_START_COUNT, 16).
