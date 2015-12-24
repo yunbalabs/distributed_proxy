@@ -31,48 +31,92 @@
 -define(DEFAULT_BROADCAST_INTERVAL, 10000).                             %% 10 s
 
 slot_num() ->
-    {ok, App}  = application:get_application(?MODULE),
-    application:get_env(App, slot_num, ?DEFAULT_SLOT_NUM).
+    case application:get_application(?MODULE) of
+        undefined ->
+            ?DEFAULT_SLOT_NUM;
+        {ok, App} ->
+            application:get_env(App, slot_num, ?DEFAULT_SLOT_NUM)
+    end.
 
 replica_size() ->
-    {ok, App}  = application:get_application(?MODULE),
-    application:get_env(App, replica_size, ?DEFAULT_REPLICA_SIZE).
+    case application:get_application(?MODULE) of
+        undefined ->
+            ?DEFAULT_REPLICA_SIZE;
+        {ok, App} ->
+            application:get_env(App, replica_size, ?DEFAULT_REPLICA_SIZE)
+    end.
 
 check_replica_interval() ->
-    {ok, App}  = application:get_application(?MODULE),
-    application:get_env(App, check_replica_interval, ?DEFAULT_CHECK_REPLICA_INTERVAL).
+    case application:get_application(?MODULE) of
+        undefined ->
+            ?DEFAULT_CHECK_REPLICA_INTERVAL;
+        {ok, App} ->
+            application:get_env(App, check_replica_interval, ?DEFAULT_CHECK_REPLICA_INTERVAL)
+    end.
 
 replica_parallel_start_count() ->
-    {ok, App}  = application:get_application(?MODULE),
-    application:get_env(App, replica_parallel_start_count, ?DEFAULT_REPLICA_PARALLEL_START_COUNT).
+    case application:get_application(?MODULE) of
+        undefined ->
+            ?DEFAULT_REPLICA_PARALLEL_START_COUNT;
+        {ok, App} ->
+            application:get_env(App, replica_parallel_start_count, ?DEFAULT_REPLICA_PARALLEL_START_COUNT)
+    end.
 
 replica_module() ->
-    {ok, App}  = application:get_application(?MODULE),
-    application:get_env(App, replica_module, ?DEFAULT_REPLICA_MODULE).
+    case application:get_application(?MODULE) of
+        undefined ->
+            ?DEFAULT_REPLICA_MODULE;
+        {ok, App} ->
+            application:get_env(App, replica_module, ?DEFAULT_REPLICA_MODULE)
+    end.
 
 warn_up_check_interval() ->
-    {ok, App}  = application:get_application(?MODULE),
-    application:get_env(App, warn_up_check_interval, ?DEFAULT_WARN_UP_CHECK_INTERVAL).
+    case application:get_application(?MODULE) of
+        undefined ->
+            ?DEFAULT_WARN_UP_CHECK_INTERVAL;
+        {ok, App} ->
+            application:get_env(App, warn_up_check_interval, ?DEFAULT_WARN_UP_CHECK_INTERVAL)
+    end.
 
 warn_up_timeout() ->
-    {ok, App}  = application:get_application(?MODULE),
-    application:get_env(App, warn_up_timeout, ?DEFAULT_WARN_UP_TIMEOUT).
+    case application:get_application(?MODULE) of
+        undefined ->
+            ?DEFAULT_WARN_UP_TIMEOUT;
+        {ok, App} ->
+            application:get_env(App, warn_up_timeout, ?DEFAULT_WARN_UP_TIMEOUT)
+    end.
 
 replica_proxy_ping_interval() ->
-    {ok, App}  = application:get_application(?MODULE),
-    application:get_env(App, replica_proxy_ping_interval, ?DEFAULT_REPLICA_PROXY_PING_INTERVAL).
+    case application:get_application(?MODULE) of
+        undefined ->
+            ?DEFAULT_REPLICA_PROXY_PING_INTERVAL;
+        {ok, App} ->
+            application:get_env(App, replica_proxy_ping_interval, ?DEFAULT_REPLICA_PROXY_PING_INTERVAL)
+    end.
 
 replica_proxy_check_interval() ->
-    {ok, App}  = application:get_application(?MODULE),
-    application:get_env(App, replica_proxy_check_interval, ?DEFAULT_REPLICA_PROXY_CHECK_INTERVAL).
+    case application:get_application(?MODULE) of
+        undefined ->
+            ?DEFAULT_REPLICA_PROXY_CHECK_INTERVAL;
+        {ok, App} ->
+            application:get_env(App, replica_proxy_check_interval, ?DEFAULT_REPLICA_PROXY_CHECK_INTERVAL)
+    end.
 
 replica_proxy_overload_threshold() ->
-    {ok, App}  = application:get_application(?MODULE),
-    application:get_env(App, replica_proxy_overload_threshold, ?DEFAULT_REPLICA_PROXY_OVERLOAD_THRESHOLD).
+    case application:get_application(?MODULE) of
+        undefined ->
+            ?DEFAULT_REPLICA_PROXY_OVERLOAD_THRESHOLD;
+        {ok, App} ->
+            application:get_env(App, replica_proxy_overload_threshold, ?DEFAULT_REPLICA_PROXY_OVERLOAD_THRESHOLD)
+    end.
 
 broadcast_interval() ->
-    {ok, App}  = application:get_application(?MODULE),
-    application:get_env(App, broadcast_interval, ?DEFAULT_BROADCAST_INTERVAL).
+    case application:get_application(?MODULE) of
+        undefined ->
+            ?DEFAULT_BROADCAST_INTERVAL;
+        {ok, App} ->
+            application:get_env(App, broadcast_interval, ?DEFAULT_BROADCAST_INTERVAL)
+    end.
 
 set(check_replica_interval, Interval) when is_integer(Interval), Interval > 0 ->
     {ok, App}  = application:get_application(?MODULE),
