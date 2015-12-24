@@ -118,6 +118,8 @@ init([{Idx, GroupIndex}]) ->
     Module = distributed_proxy_config:replica_module(),
     WarnUpCheckInterval = distributed_proxy_config:warn_up_check_interval(),
     WarnUpTimeout = distributed_proxy_config:warn_up_timeout(),
+
+    distributed_proxy_status:update_replica_state({Idx, GroupIndex}, started),
     {ok, started, #state{
         index = Idx, group_index = GroupIndex,
         module = Module,
@@ -152,6 +154,7 @@ warn_up(check_tick, State = #state{
         {ok, up, ModuleState2} ->
             case replica_actived(State) of
                 {ok, NewState} ->
+                    distributed_proxy_status:update_replica_state({Index, GroupIndex}, active),
                     lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, warn_up, active]),
                     {next_state, active, NewState#state{module_state = ModuleState2}};
                 {error, Reason} ->
@@ -234,6 +237,7 @@ started(wait_for_init, _From, State = #state{
 }) ->
     case Module:init(Index, GroupIndex) of
         {ok, ModuleState} ->
+            distributed_proxy_status:update_replica_state({Index, GroupIndex}, warn_up),
             lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, started, warn_up]),
             gen_fsm:send_event_after(CheckInterval, check_tick),
 
@@ -266,6 +270,7 @@ handle_event(refuse_request, StateName, State = #state{
     refuse_timer = undefined
 }) ->
     RefuseTimer = erlang:start_timer(CheckInterval * Timeout, self(), accept_request),
+    distributed_proxy_status:update_replica_state({Index, GroupIndex}, refuse),
     lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, StateName, refuse]),
     {next_state, refuse, State#state{refuse_timer = RefuseTimer}};
 handle_event(refuse_request, StateName, State = #state{refuse_timer = RefuseTimer}) ->
@@ -275,6 +280,7 @@ handle_event(refuse_request, StateName, State = #state{refuse_timer = RefuseTime
 handle_event(accept_request, active, State) ->
     {next_state, active, State#state{refuse_timer = undefined, slaveof_timer = undefined}};
 handle_event(accept_request, StateName, State = #state{index = Index, group_index = GroupIndex}) ->
+    distributed_proxy_status:update_replica_state({Index, GroupIndex}, active),
     lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, StateName, active]),
     {next_state, active, State#state{refuse_timer = undefined, slaveof_timer = undefined}};
 
@@ -309,6 +315,7 @@ handle_sync_event(slaveof, _From, active, State = #state{
     slaveof_timer = undefined
 }) ->
     SlaveofTimer = erlang:start_timer(CheckInterval * Timeout, self(), accept_request),
+    distributed_proxy_status:update_replica_state({Index, GroupIndex}, slaveof),
     lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, active, slaveof]),
     {reply, ok, slaveof, State#state{slaveof_timer = SlaveofTimer}};
 handle_sync_event(slaveof, From, active, State = #state{slaveof_timer = SlaveofTimer}) ->
@@ -348,6 +355,7 @@ handle_info({timeout, TimerRef, accept_request}, refuse, State = #state{
     index = Index, group_index = GroupIndex,
     refuse_timer = TimerRef
 }) ->
+    distributed_proxy_status:update_replica_state({Index, GroupIndex}, active),
     lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, refuse, active]),
     {next_state, active, State#state{refuse_timer = undefined}};
 
@@ -355,6 +363,7 @@ handle_info({timeout, TimerRef, accept_request}, slaveof, State = #state{
     index = Index, group_index = GroupIndex,
     slaveof_timer = TimerRef
 }) ->
+    distributed_proxy_status:update_replica_state({Index, GroupIndex}, active),
     lager:info("replica ~p_~p state changed ~p -> ~p", [Index, GroupIndex, slaveof, active]),
     {next_state, active, State#state{slaveof_timer = undefined}};
 handle_info({'$replica_proxy_ping', From}, StateName, State) ->
@@ -375,7 +384,10 @@ handle_info(_Info, StateName, State) ->
 %%--------------------------------------------------------------------
 -spec(terminate(Reason :: normal | shutdown | {shutdown, term()}
 | term(), StateName :: atom(), StateData :: term()) -> term()).
-terminate(_Reason, started, _State) ->
+terminate(_Reason, started, #state{
+    index = Index, group_index = GroupIndex
+}) ->
+    distributed_proxy_status:update_replica_state({Index, GroupIndex}, down),
     ok;
 terminate(Reason, _StateName, #state{
     index = Index, group_index = GroupIndex,
@@ -383,6 +395,7 @@ terminate(Reason, _StateName, #state{
 }) ->
     lager:info("replica ~p_~p terminate", [Index, GroupIndex]),
     Module:terminate(Reason, ModuleState),
+    distributed_proxy_status:update_replica_state({Index, GroupIndex}, down),
     ok.
 
 %%--------------------------------------------------------------------

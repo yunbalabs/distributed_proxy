@@ -182,13 +182,15 @@ replicas_output(Node) ->
                         not_found
                 end,
 
+            ReplicaStatus = distributed_proxy_status:replica_state({Idx, GroupIndex}),
+
             Proxy = distributed_proxy_util:replica_proxy_reg_name(list_to_binary(lists:flatten(io_lib:format("~w_~w", [Idx, GroupIndex])))),
             case catch sys:get_status({Proxy, Node}, 10000) of
                 {status, _, _, [_, _, _, _, {state, _, _, _, _, Counter, _, _, _, _}]} ->
-                    {ReplicaPid, Counter};
+                    {ReplicaStatus, ReplicaPid, Counter};
                 Error ->
                     lager:error("get proxy status failed ~p", [Error]),
-                    {ReplicaPid, 0}
+                    {ReplicaStatus, ReplicaPid, 0}
             end
         end,
 
@@ -196,7 +198,7 @@ replicas_output(Node) ->
         fun ({Idx, GroupId}) ->
             Pos = distributed_proxy_ring:index2pos({Idx, GroupId}, MyRing),
             NodeGroup = distributed_proxy_ring:get_nodes(Pos, MyRing),
-            {IsMyReplica, ReplicaPid, ProxyCounter} =
+            {IsMyReplica, ReplicaStatus, ReplicaPid, ProxyCounter} =
                 case distributed_proxy_util:index_of(Node, NodeGroup) of
                     not_found ->
                         IdealNodes = distributed_proxy_ring:get_ideal_nodes(GroupId, MyRing),
@@ -204,15 +206,15 @@ replicas_output(Node) ->
                             not_found ->
                                 {no, not_found, 0};
                             IdealGroupIndex ->
-                                {RP, C} = FetchFun(Idx, IdealGroupIndex),
-                                {future, RP, C}
+                                {RS, RP, C} = FetchFun(Idx, IdealGroupIndex),
+                                {future, RS, RP, C}
                         end;
                     GroupIndex ->
-                        {RP, C} = FetchFun(Idx, GroupIndex),
-                        {yes, RP, C}
+                        {RS, RP, C} = FetchFun(Idx, GroupIndex),
+                        {yes, RS, RP, C}
                 end,
 
-            [{replica, Idx}, {own, IsMyReplica}, {pid, ReplicaPid}, {proxy_counter, ProxyCounter}]
+            [{replica, Idx}, {own, IsMyReplica}, {status, ReplicaStatus}, {pid, ReplicaPid}, {proxy_counter, ProxyCounter}]
         end, Owners),
 
     T0 = clique_status:text(io_lib:format("Replicas on ~p:", [Node])),

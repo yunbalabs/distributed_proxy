@@ -26,7 +26,8 @@ start_link() ->
 
 init([]) ->
     Children = lists:flatten([
-        ?CHILD(distributed_proxy_replica_sup, supervisor),
+        ?CHILD(distributed_proxy_status, worker),
+        ?CHILD(distributed_proxy_replica_sup, supervisor, 305000),
         ?CHILD(distributed_proxy_ring_events, worker),
         ?CHILD(distributed_proxy_ring_manager, worker),
         ?CHILD(distributed_proxy_replica_proxy_sup, supervisor),
