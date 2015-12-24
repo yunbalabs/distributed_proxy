@@ -12,7 +12,11 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, get_replica_pid/1, unregister_replica/2]).
+-export([
+    start_link/0,
+    get_replica_pid/1,
+    unregister_replica/2, pause_replica/1, pause_replica/2, resume_replica/1, resume_replica/2
+]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -27,7 +31,8 @@
 -define(ETS, ets_distributed_proxy_replica_manager).
 
 -record(state, {
-    idxtab       %% cache idx -> live_replica_pid
+    idxtab,       %% cache idx -> live_replica_pid
+    forbidden_replicas
 }).
 
 %%%===================================================================
@@ -56,6 +61,20 @@ get_replica_pid({Idx, GroupIndex}) ->
 unregister_replica({Idx, GroupIndex}, Pid) ->
     gen_server:call(?SERVER, {unregister_replica, {Idx, GroupIndex}, Pid}, infinity).
 
+pause_replica([IdxStr, GroupIndexStr]) ->
+    Idx = list_to_integer(IdxStr),
+    GroupIndex = list_to_integer(GroupIndexStr),
+    pause_replica(node(), {Idx, GroupIndex}).
+pause_replica(Node, {Idx, GroupIndex}) ->
+    gen_server:call({?SERVER, Node}, {pause_replica, {Idx, GroupIndex}}).
+
+resume_replica([IdxStr, GroupIndexStr]) ->
+    Idx = list_to_integer(IdxStr),
+    GroupIndex = list_to_integer(GroupIndexStr),
+    resume_replica(node(), {Idx, GroupIndex}).
+resume_replica(Node, {Idx, GroupIndex}) ->
+    gen_server:call({?SERVER, Node}, {resume_replica, {Idx, GroupIndex}}).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -77,7 +96,7 @@ unregister_replica({Idx, GroupIndex}, Pid) ->
 init([]) ->
     ?ETS = ets:new(?ETS, [named_table, protected]),
     self() ! tick,
-    {ok, #state{}}.
+    {ok, #state{forbidden_replicas = sets:new()}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -105,6 +124,18 @@ handle_call({unregister_replica, {Idx, GroupIndex}, Pid}, _From, State) ->
             ignore
     end,
     {reply, ok, State};
+handle_call({pause_replica, {Idx, GroupIndex}}, _From, State = #state{forbidden_replicas = Forbidden}) ->
+    Forbidden2 = sets:add_element({Idx, GroupIndex}, Forbidden),
+    case ets:lookup(?ETS, {Idx, GroupIndex}) of
+        [{{Idx, GroupIndex}, Pid}] ->
+            distributed_proxy_replica:trigger_stop(Pid);
+        []  ->
+            true
+    end,
+    {reply, ok, State#state{forbidden_replicas = Forbidden2}};
+handle_call({resume_replica, {Idx, GroupIndex}}, _From, State = #state{forbidden_replicas = Forbidden}) ->
+    Forbidden2 = sets:del_element({Idx, GroupIndex}, Forbidden),
+    {reply, ok, State#state{forbidden_replicas = Forbidden2}};
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
@@ -136,7 +167,7 @@ handle_cast(_Request, State) ->
     {noreply, NewState :: #state{}} |
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), NewState :: #state{}}).
-handle_info(tick, State) ->
+handle_info(tick, State = #state{forbidden_replicas = Forbidden}) ->
     schedule_management_timer(),
     {ok, Ring} = distributed_proxy_ring_manager:get_ring(),
     Map = distributed_proxy_ring:get_map(Ring),
@@ -166,9 +197,12 @@ handle_info(tick, State) ->
 
     ShouldStart3 = lists:ukeysort(1, ShouldStart2),
 
-    %% TODO: dynamic config for forbidding some replicas start
+    {ShouldStart4, _Forbidden} = lists:partition(
+        fun({Idx, GroupIndex}) ->
+            not sets:is_element({Idx, GroupIndex}, Forbidden)
+        end, ShouldStart3),
 
-    maybe_start_replica(ShouldStart3),
+    maybe_start_replica(ShouldStart4),
     {noreply, State};
 handle_info({'DOWN', MonRef, process, _P, _I}, State) ->
     case ets:lookup(?ETS, MonRef) of
