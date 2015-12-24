@@ -49,12 +49,7 @@ nodes() ->
     ets:tab2list(?MODULE).
 
 is_up(Node) ->
-    case ets:lookup(?MODULE, Node) of
-        [{Node, _TimeStamp}] ->
-            true;
-        [] ->
-            false
-    end.
+    ets:member(?MODULE, Node).
 
 peers() ->
     gen_server:call(?SERVER, {get_peers}).
