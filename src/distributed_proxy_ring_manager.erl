@@ -135,7 +135,7 @@ init([]) ->
 handle_call({add_node, Node}, _From, State = #state{ring = Ring}) ->
     case lists:member(Node, distributed_proxy_ring:get_all_nodes(Ring)) of
         true ->
-            {reply, ok, State};
+            {reply, exists, State};
         false ->
             case distributed_proxy_ring:add_node(Node, Ring) of
                 {ok, Ring2} ->
