@@ -15,7 +15,7 @@
 -export([
     start_link/0,
     get_replica_pid/1,
-    unregister_replica/2, pause_replica/1, pause_replica/2, resume_replica/1, resume_replica/2
+    unregister_replica/2, pause_replica/2, resume_replica/2
 ]).
 
 %% gen_server callbacks
@@ -61,17 +61,9 @@ get_replica_pid({Idx, GroupIndex}) ->
 unregister_replica({Idx, GroupIndex}, Pid) ->
     gen_server:call(?SERVER, {unregister_replica, {Idx, GroupIndex}, Pid}, infinity).
 
-pause_replica([IdxStr, GroupIndexStr]) ->
-    Idx = list_to_integer(IdxStr),
-    GroupIndex = list_to_integer(GroupIndexStr),
-    pause_replica(node(), {Idx, GroupIndex}).
 pause_replica(Node, {Idx, GroupIndex}) ->
     gen_server:call({?SERVER, Node}, {pause_replica, {Idx, GroupIndex}}).
 
-resume_replica([IdxStr, GroupIndexStr]) ->
-    Idx = list_to_integer(IdxStr),
-    GroupIndex = list_to_integer(GroupIndexStr),
-    resume_replica(node(), {Idx, GroupIndex}).
 resume_replica(Node, {Idx, GroupIndex}) ->
     gen_server:call({?SERVER, Node}, {resume_replica, {Idx, GroupIndex}}).
 

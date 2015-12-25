@@ -16,7 +16,7 @@
     warn_up_timeout/0,
     replica_proxy_ping_interval/0, replica_proxy_check_interval/0, replica_proxy_overload_threshold/0,
     broadcast_interval/0,
-    set/2, set/1, get/1]).
+    set/2]).
 
 -define(DEFAULT_SLOT_NUM, 32).
 -define(DEFAULT_REPLICA_SIZE, 2).
@@ -144,13 +144,3 @@ set(replica_proxy_overload_threshold, Threshold) when is_integer(Threshold), Thr
 set(broadcast_interval, Interval) when is_integer(Interval), Interval > 0 ->
     {ok, App}  = application:get_application(?MODULE),
     application:set_env(App, broadcast_interval, Interval).
-
-set([NameStr, IntegerStr]) ->
-    Name = list_to_atom(NameStr),
-    Value = list_to_integer(IntegerStr),
-    lager:info("update config ~p=~p", [Name, Value]),
-    set(Name, Value).
-
-get([NameStr]) ->
-    Fun = list_to_atom(NameStr),
-    io:format("~p~n", [?MODULE:Fun()]).
