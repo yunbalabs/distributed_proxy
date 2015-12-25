@@ -155,8 +155,8 @@ handle_call({add_node, Node}, _From, State = #state{ring = Ring}) ->
                         lists:delete(node(), AllNodes)),
 
                     {reply, ok, NewState};
-                {still_reconciling, Ring2} ->
-                    {reply, still_reconciling, State#state{ring = Ring2}}
+                {Error, Ring2} ->
+                    {reply, Error, State#state{ring = Ring2}}
             end
     end;
 

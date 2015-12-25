@@ -56,21 +56,33 @@ create(NodeName) ->
 
 add_node(_NodeName, State = #state{next = Next}) when length(Next) > 0 ->
     {still_reconciling, State};
-add_node(NodeName, State = #state{replica_size = 1}) ->
-    NewState = reconcile(State#state{free_node = [NodeName]}),
-    {ok, NewState};
-add_node(NodeName, State = #state{free_node = FreeNode, replica_size = ReplicaSize}) ->
-    NewState =
-        case length(FreeNode) of
-            ReplicaSize ->
-                State2 = reconcile(State),
-                add_node(NodeName, State2);
-            CurrentSize when ReplicaSize - CurrentSize =:= 1 ->
-                reconcile(State#state{free_node = FreeNode ++ [NodeName]});
-            CurrentSize when CurrentSize < ReplicaSize ->
-                State#state{free_node = FreeNode ++ [NodeName]}
-        end,
-    {ok, NewState}.
+add_node(NodeName, State = #state{slot_num = SlotNum, replica_size = 1}) ->
+    AllNodes = get_all_nodes(State),
+    case length(AllNodes) of
+        SlotNum ->
+            {ring_full, State};
+        _ ->
+            NewState = reconcile(State#state{free_node = [NodeName]}),
+            {ok, NewState}
+    end;
+add_node(NodeName, State = #state{slot_num = SlotNum, free_node = FreeNode, replica_size = ReplicaSize}) ->
+    AllNodes = get_all_nodes(State),
+    case length(AllNodes) of
+        SlotNum ->
+            {ring_full, State};
+        _ ->
+            NewState =
+                case length(FreeNode) of
+                    ReplicaSize ->
+                        State2 = reconcile(State),
+                        add_node(NodeName, State2);
+                    CurrentSize when ReplicaSize - CurrentSize =:= 1 ->
+                        reconcile(State#state{free_node = FreeNode ++ [NodeName]});
+                    CurrentSize when CurrentSize < ReplicaSize ->
+                        State#state{free_node = FreeNode ++ [NodeName]}
+                end,
+            {ok, NewState}
+    end.
 
 get_chashbin(#state{chashbin = CHBin}) ->
     CHBin.
