@@ -204,7 +204,7 @@ replicas_output(Node) ->
                         IdealNodes = distributed_proxy_ring:get_ideal_nodes(GroupId, MyRing),
                         case distributed_proxy_util:index_of(Node, IdealNodes) of
                             not_found ->
-                                {no, not_found, 0};
+                                {no, down, not_found, 0};
                             IdealGroupIndex ->
                                 {RS, RP, C} = FetchFun(Idx, IdealGroupIndex),
                                 {future, RS, RP, C}
