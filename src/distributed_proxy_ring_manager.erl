@@ -138,7 +138,7 @@ handle_call({add_node, Node}, _From, State = #state{ring = Ring}) ->
             {reply, exists, State};
         false ->
             case distributed_proxy_ring:add_node(Node, Ring) of
-                {ok, Ring2} ->
+                {ok, FreeNode, Ring2} ->
                     {ok, NewState} = update_ring(Ring2, State),
 
                     %% TODO: should use gossip to make the ring consistency on all nodes
@@ -153,6 +153,11 @@ handle_call({add_node, Node}, _From, State = #state{ring = Ring}) ->
                             end
                         end,
                         lists:delete(node(), AllNodes)),
+
+                    lists:foreach(
+                        fun(EachNode) ->
+                            distributed_proxy_util:safe_rpc(EachNode, distributed_proxy_replica_sup, stop_all, [], 3000)
+                        end, FreeNode),
 
                     {reply, ok, NewState};
                 {Error, Ring2} ->

@@ -23,7 +23,6 @@ join_cluster(Node) ->
         pong ->
             case rpc:call(Node, distributed_proxy_ring_manager, add_node, [node()]) of
                 ok ->
-                    distributed_proxy_replica_sup:stop_all(),
                     ok;
                 Error ->
                     Error

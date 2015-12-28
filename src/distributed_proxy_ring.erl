@@ -62,8 +62,9 @@ add_node(NodeName, State = #state{slot_num = SlotNum, replica_size = 1}) ->
         SlotNum ->
             {ring_full, State};
         _ ->
-            NewState = reconcile(State#state{free_node = [NodeName]}),
-            {ok, NewState}
+            FreeNode = [NodeName],
+            NewState = reconcile(State#state{free_node = FreeNode}),
+            {ok, FreeNode, NewState}
     end;
 add_node(NodeName, State = #state{slot_num = SlotNum, free_node = FreeNode, replica_size = ReplicaSize}) ->
     AllNodes = get_all_nodes(State),
@@ -71,17 +72,14 @@ add_node(NodeName, State = #state{slot_num = SlotNum, free_node = FreeNode, repl
         SlotNum ->
             {ring_full, State};
         _ ->
-            NewState =
-                case length(FreeNode) of
-                    ReplicaSize ->
-                        State2 = reconcile(State),
-                        add_node(NodeName, State2);
-                    CurrentSize when ReplicaSize - CurrentSize =:= 1 ->
-                        reconcile(State#state{free_node = FreeNode ++ [NodeName]});
-                    CurrentSize when CurrentSize < ReplicaSize ->
-                        State#state{free_node = FreeNode ++ [NodeName]}
-                end,
-            {ok, NewState}
+            case length(FreeNode) of
+                CurrentSize when ReplicaSize - CurrentSize =:= 1 ->
+                    NewFreeNode = FreeNode ++ [NodeName],
+                    NewState = reconcile(State#state{free_node = NewFreeNode}),
+                    {ok, NewFreeNode, NewState};
+                CurrentSize when CurrentSize < ReplicaSize ->
+                    {ok, [], State#state{free_node = FreeNode ++ [NodeName]}}
+            end
     end.
 
 get_chashbin(#state{chashbin = CHBin}) ->
@@ -113,12 +111,14 @@ get_ideal_nodes(GroupId, #state{node_group = NodeGroup}) ->
             []
     end.
 
-get_all_nodes(#state{node_group = NodeGroup}) ->
-    lists:usort(lists:foldl(
-        fun({_GroupId, Nodes}, Acc) ->
-            lists:merge([Nodes, Acc])
-        end,
-        [], NodeGroup)).
+get_all_nodes(#state{node_group = NodeGroup, free_node = FreeNode}) ->
+    AllNodes =
+        lists:foldl(
+            fun({_GroupId, Nodes}, Acc) ->
+                lists:merge([Nodes, Acc])
+            end,
+            [], NodeGroup),
+    lists:usort(FreeNode ++ AllNodes).
 
 get_owners(#state{raw_ring = Ring}) ->
     ring:owners(Ring).
