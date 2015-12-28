@@ -201,6 +201,7 @@ slaveof(Req, State) ->
     lager:error("unknown request ~p", [Req]),
     {next_state, slaveof, State}.
 
+%% TODO: refuse excepts the read request
 refuse(#replica_request{sender = Sender}, State) ->
     distributed_proxy_message:reply(Sender, {error, refuse}),
     {next_state, refuse, State};

@@ -182,7 +182,12 @@ replicas_output(Node) ->
                         not_found
                 end,
 
-            ReplicaStatus = distributed_proxy_status:replica_state({Idx, GroupIndex}),
+            ReplicaStatus =
+                case distributed_proxy_util:safe_rpc(Node, distributed_proxy_status, replica_state, [{Idx, GroupIndex}], 10000) of
+                    {badrpc, _} -> down;
+                    Status ->
+                        Status
+                end,
 
             Proxy = distributed_proxy_util:replica_proxy_reg_name(list_to_binary(lists:flatten(io_lib:format("~w_~w", [Idx, GroupIndex])))),
             case catch sys:get_status({Proxy, Node}, 10000) of
