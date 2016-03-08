@@ -23,11 +23,11 @@ command(Cmd) ->
 
 register_all_usage() ->
     clique:register_usage(["dp-admin", "cluster"], cluster_usage()),
-    clique:register_usage(["riak-admin", "cluster", "status"], status_usage()),
-    clique:register_usage(["riak-admin", "cluster", "replicas"], replicas_usage()),
-    clique:register_usage(["riak-admin", "cluster", "map"], map_usage()),
-    clique:register_usage(["riak-admin", "cluster", "replica"], replica_usage()),
-    clique:register_usage(["riak-admin", "cluster", "locate"], locate_usage()).
+    clique:register_usage(["dp-admin", "cluster", "status"], status_usage()),
+    clique:register_usage(["dp-admin", "cluster", "replicas"], replicas_usage()),
+    clique:register_usage(["dp-admin", "cluster", "map"], map_usage()),
+    clique:register_usage(["dp-admin", "cluster", "replica"], replica_usage()),
+    clique:register_usage(["dp-admin", "cluster", "locate"], locate_usage()).
 
 register_all_commands() ->
     lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
