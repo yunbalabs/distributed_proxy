@@ -16,6 +16,7 @@
     warn_up_timeout/0,
     replica_proxy_ping_interval/0, replica_proxy_check_interval/0, replica_proxy_overload_threshold/0,
     broadcast_interval/0,
+    preload_module/0,
     set/2]).
 
 -define(DEFAULT_SLOT_NUM, 32).
@@ -116,6 +117,14 @@ broadcast_interval() ->
             ?DEFAULT_BROADCAST_INTERVAL;
         {ok, App} ->
             application:get_env(App, broadcast_interval, ?DEFAULT_BROADCAST_INTERVAL)
+    end.
+
+preload_module() ->
+    case application:get_application(?MODULE) of
+        undefined ->
+            [];
+        {ok, App} ->
+            application:get_env(App, preload_module, [])
     end.
 
 set(check_replica_interval, Interval) when is_integer(Interval), Interval > 0 ->

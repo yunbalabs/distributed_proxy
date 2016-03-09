@@ -25,7 +25,13 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-    Children = lists:flatten([
+    PreloadModules = lists:map(
+        fun ({Module, Type}) ->
+            ?CHILD(Module, Type)
+        end,
+        distributed_proxy_config:preload_module()),
+
+    Children = lists:flatten(PreloadModules ++ [
         ?CHILD(distributed_proxy_status, worker),
         ?CHILD(distributed_proxy_replica_sup, supervisor, 305000),
         ?CHILD(distributed_proxy_ring_events, worker),
