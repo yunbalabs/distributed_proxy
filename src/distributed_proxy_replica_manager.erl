@@ -120,7 +120,7 @@ handle_call({pause_replica, {Idx, GroupIndex}}, _From, State = #state{forbidden_
     Forbidden2 = sets:add_element({Idx, GroupIndex}, Forbidden),
     case ets:lookup(?ETS, {Idx, GroupIndex}) of
         [{{Idx, GroupIndex}, Pid}] ->
-            distributed_proxy_replica:trigger_stop(Pid);
+            distributed_proxy_replica:trigger_stop(Pid, normal);
         []  ->
             true
     end,
@@ -257,7 +257,7 @@ maybe_start_replica(StartIdx) ->
                     lager:debug("Replica initialization ready ~p, ~p_~p", [Pid, Idx, GroupIndex]),
                     {{Idx, GroupIndex}, Pid};
                 {error, Reason} ->
-                    distributed_proxy_replica:trigger_stop(Pid),
+                    distributed_proxy_replica:trigger_stop(Pid, normal),
                     lager:error("Replica initialization failed ~p ~p_~p ~p", [Pid, Idx, GroupIndex, Reason]),
                     {error, Reason}
             end

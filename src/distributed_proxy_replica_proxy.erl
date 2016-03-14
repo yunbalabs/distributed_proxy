@@ -217,6 +217,6 @@ overload_threshold_check(ReplicaPid, State = #state{
         false ->
             NewState = forget_replica(State),
             distributed_proxy_replica_manager:unregister_replica({Idx, GroupIndex}, ReplicaPid),
-            distributed_proxy_replica:trigger_stop(ReplicaPid),
+            distributed_proxy_replica:trigger_stop(ReplicaPid, normal),
             {overload, NewState}
     end.

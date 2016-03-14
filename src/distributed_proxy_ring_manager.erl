@@ -381,7 +381,7 @@ shutdown_unnecessary_replica([Node | OldNodes], [_ | NewNodes], Pos, GroupIndex,
                 {ok, Pid} ->
                     distributed_proxy_replica_manager:unregister_replica({Idx, GroupIndex}, Pid),
                     distributed_proxy_replica_proxy:forget_my_replica(ProxyName),
-                    distributed_proxy_replica:trigger_stop(Pid);
+                    distributed_proxy_replica:trigger_stop(Pid, normal);
                 _ ->
                     ignore
             end;
