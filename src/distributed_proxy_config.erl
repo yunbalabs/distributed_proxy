@@ -25,7 +25,7 @@
 -define(DEFAULT_REPLICA_PARALLEL_START_COUNT, 16).
 -define(DEFAULT_REPLICA_MODULE, distributed_proxy_replica_example).
 -define(DEFAULT_WARN_UP_CHECK_INTERVAL, 1000).                          %% 1000 ms
--define(DEFAULT_WARN_UP_TIMEOUT, 600).                                  %% 10 min = 600 * 1000 ms
+-define(DEFAULT_WARN_UP_TIMEOUT, 300).                                  %% 5 min = 300 * 1000 ms
 -define(DEFAULT_REPLICA_PROXY_PING_INTERVAL, 2500).                     %% ping every 2500 times
 -define(DEFAULT_REPLICA_PROXY_CHECK_INTERVAL, 5000).                    %% check more than 5000 times
 -define(DEFAULT_REPLICA_PROXY_OVERLOAD_THRESHOLD, 10000).               %% overload more than 10000 times
